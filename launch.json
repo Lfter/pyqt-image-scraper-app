@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run PyQt App",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "env": {
+                "QT_QPA_PLATFORM_PLUGIN_PATH": "/home/ling/桌面/Python/Pyqt Image Scraper App/.venv/lib/python3.12/site-packages/PyQt5/Qt5/plugins/platforms"
+            }
+        }
+    ]
+}
