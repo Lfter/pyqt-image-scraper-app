@@ -1,8 +1,6 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QFileDialog,
-    QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,8 +23,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("网页图片抓取工具")
-        self.resize(860, 620)
-        self.setMinimumSize(760, 520)
+        self.setFixedSize(860, 620)
 
         self.setStyleSheet(
             """
@@ -86,62 +83,40 @@ class MainWindow(QMainWindow):
         outer_layout = QVBoxLayout(central)
         outer_layout.setContentsMargins(70, 40, 70, 40)
         outer_layout.setAlignment(Qt.AlignCenter)
-
-        card = QFrame()
-        card.setObjectName("card")
-        card.setStyleSheet(
-            """
-            QFrame#card {
-                background: white;
-                border-radius: 18px;
-            }
-            """
-        )
-
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(30)
-        shadow.setXOffset(0)
-        shadow.setYOffset(4)
-        shadow.setColor(Qt.gray)
-        card.setGraphicsEffect(shadow)
-
-        outer_layout.addWidget(card)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(52, 52, 52, 52)
-        layout.setSpacing(28)
+        outer_layout.setSpacing(28)
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("请输入网址，例如：https://example.com")
         self.url_input.setMinimumHeight(58)
-        layout.addWidget(self.url_input)
+        outer_layout.addWidget(self.url_input)
 
         self.status_label = QLabel("0% 正在准备...")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addSpacing(8)
-        layout.addWidget(self.status_label)
+        outer_layout.addSpacing(8)
+        outer_layout.addWidget(self.status_label)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setMinimumHeight(12)
-        layout.addWidget(self.progress_bar)
+        outer_layout.addWidget(self.progress_bar)
 
-        layout.addSpacing(30)
+        outer_layout.addSpacing(30)
 
         button_row = QHBoxLayout()
         button_row.addStretch()
-        button_row.addStretch()
-        layout.addLayout(button_row)
 
         self.start_button = QPushButton("开始抓取")
         self.start_button.setFixedSize(360, 92)
         self.start_button.clicked.connect(self.choose_folder_and_start)
-        button_row.addWidget(self.start_button, alignment=Qt.AlignCenter)
+        button_row.addWidget(self.start_button)
 
-        layout.addStretch()
+        button_row.addStretch()
+        outer_layout.addLayout(button_row)
+
+        outer_layout.addStretch()
 
     def choose_folder_and_start(self):
         page_url = self.url_input.text().strip()
