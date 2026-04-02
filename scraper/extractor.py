@@ -2,22 +2,29 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
+from utils.helpers import setup_logger
 
 
 class ImageExtractor:
     def __init__(self, session):
         self.session = session
+        self.logger = setup_logger()
+
 
     def fetch_html(self, url: str) -> str:
+        self.logger.info(f"开始请求网页：{url}")
         response = self.session.get(url, timeout=20)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
+        self.logger.info(f"成功获取网页内容，URL: {url}")
         return response.text
 
     def extract_from_page(self, page_url: str):
         html = self.fetch_html(page_url)
         soup = BeautifulSoup(html, "html.parser")
-        return self.extract_image_urls(soup, page_url)
+        image_urls = self.extract_image_urls(soup, page_url)
+        self.logger.info(f"图片链接提取完成，共提取 {len(image_urls)} 条链接")
+        return image_urls
 
     def extract_image_urls(self, soup: BeautifulSoup, base_url: str):
         found = []

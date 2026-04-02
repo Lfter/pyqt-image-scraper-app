@@ -3,17 +3,19 @@ import os
 import re
 from urllib.parse import urlparse, unquote
 
-from utils.helpers import USER_AGENT
+from utils.helpers import USER_AGENT,setup_logger
 
 
 class ImageDownloader:
     def __init__(self, session, page_url, save_dir):
         self.session = session
+        self.logger = setup_logger()
         self.page_url = page_url
         self.save_dir = save_dir
 
     def download_images(self, image_urls, progress_callback=None, status_callback=None):
         total = len(image_urls)
+        self.logger.info(f"开始下载图片，共 {total} 张")
         success_count = 0
 
         if total == 0:
@@ -47,9 +49,11 @@ class ImageDownloader:
 
                 success_count += 1
 
-            except Exception:
-                pass
-
+            except Exception as exc:
+                self.logger.warning(f"图片下载失败：{image_url}，错误：{exc}")
+                os.makedirs("logs", exist_ok=True)
+                with open("logs/failed_images.txt", "a", encoding="utf-8") as f:
+                    f.write(f"{image_url}\n|{str(exc)}\n")
             progress = int(index / total * 100)
 
             if progress_callback:
@@ -57,6 +61,8 @@ class ImageDownloader:
 
             if status_callback:
                 status_callback(f"正在下载：{index}/{total}")
+        failed_count = total - success_count
+        self.logger.info(f"下载阶段结束，成功 {success_count} 张，失败 {failed_count} 张")
 
         if success_count == 0:
             raise ValueError("网页中找到了图片链接，但全部下载失败。")
