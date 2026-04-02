@@ -20,6 +20,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.worker = None
         self.init_ui()
+        self.current_mode = "static"
 
     def init_ui(self):
         self.setWindowTitle("网页图片抓取工具")
@@ -81,9 +82,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         outer_layout = QVBoxLayout(central)
-        outer_layout.setContentsMargins(70, 40, 70, 40)
-        outer_layout.setAlignment(Qt.AlignCenter)
-        outer_layout.setSpacing(28)
+        outer_layout.setContentsMargins(70, 20, 70, 20)
+        outer_layout.setAlignment(Qt.AlignTop)
+        outer_layout.setSpacing(20)
+
+        self.mode_button = QPushButton("当前模式：静态抓取")
+        self.mode_button.setFixedHeight(64)
+        self.mode_button.clicked.connect(self.toggle_mode)
+        outer_layout.addWidget(self.mode_button)
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("请输入网址，例如：https://example.com")
@@ -116,7 +122,14 @@ class MainWindow(QMainWindow):
         button_row.addStretch()
         outer_layout.addLayout(button_row)
 
-        outer_layout.addStretch()
+    def toggle_mode(self):
+        if self.current_mode == "static":
+            self.current_mode = "dynamic"
+            self.mode_button.setText("当前模式：动态抓取")
+            QMessageBox.information(self, "提示", "动态模式将打开浏览器，请在浏览器中完成登录后等待页面加载。")
+        else:
+            self.current_mode = "static"
+            self.mode_button.setText("当前模式：静态抓取")
 
     def choose_folder_and_start(self):
         page_url = self.url_input.text().strip()
@@ -137,7 +150,7 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(False)
         self.url_input.setEnabled(False)
 
-        self.worker = ImageScraperThread(page_url, save_dir)
+        self.worker = ImageScraperThread(page_url, save_dir, mode=self.current_mode)
         self.worker.progress_changed.connect(self.on_progress_changed)
         self.worker.status_changed.connect(self.on_status_changed)
         self.worker.finished_ok.connect(self.on_finished_ok)
