@@ -2,10 +2,8 @@ import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from scraper.extractor import ImageExtractor
-from scraper.dynamic_extractor import DynamicImageExtractor
 from scraper.downloader import ImageDownloader
 from utils.helpers import USER_AGENT
-from utils.helpers import USER_AGENT, setup_logger
 
 
 class ImageScraperThread(QThread):
@@ -14,37 +12,27 @@ class ImageScraperThread(QThread):
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, page_url: str, save_dir: str, mode: str = "static", parent=None):
+    def __init__(self, page_url: str, save_dir: str, mode: str = "static", image_urls=None, parent=None):
         super().__init__(parent)
         self.page_url = page_url.strip()
         self.save_dir = save_dir
         self.mode = mode
+        self.image_urls = image_urls
 
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT})
 
-        self.extractor = ImageExtractor(self.session)
         self.downloader = ImageDownloader(self.session, self.page_url, self.save_dir)
-        self.logger = setup_logger()
 
     def run(self):
         try:
             self.status_changed.emit("正在获取网页内容...")
 
-            if self.mode == "dynamic":
-                self.extractor = DynamicImageExtractor()
-
-                session = requests.Session()
-                session.headers.update({"User-Agent": USER_AGENT})
-                self.downloader = ImageDownloader(session, self.page_url, self.save_dir)
+            if self.image_urls is not None:
+                image_urls = self.image_urls
             else:
-                session = requests.Session()
-                session.headers.update({"User-Agent": USER_AGENT})
-
-                self.extractor = ImageExtractor(session)
-                self.downloader = ImageDownloader(session, self.page_url, self.save_dir)
-
-            image_urls = self.extractor.extract_from_page(self.page_url)
+                extractor = ImageExtractor(self.session)
+                image_urls = extractor.extract_from_page(self.page_url)
 
             if not image_urls:
                 raise ValueError("没有在该网页中找到可下载的图片。")
