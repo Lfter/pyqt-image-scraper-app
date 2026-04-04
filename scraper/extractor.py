@@ -32,20 +32,24 @@ class ImageExtractor:
 
         def add_url(candidate):
             full_url = self.normalize_image_url(candidate, base_url)
-            if full_url and full_url not in seen:
+            if not full_url:
+                return
+            if self.is_unwanted_image(full_url):
+                return
+            if full_url not in seen:
                 seen.add(full_url)
                 found.append(full_url)
 
         lazy_attrs = [
-            "src",
-            "data-src",
             "data-original",
+            "data-src",
             "data-lazy-src",
-            "data-url",
             "data-image",
+            "data-url",
             "data-echo",
             "data-lazy",
             "data-flickity-lazyload",
+            "src",
         ]
 
         for img in soup.find_all("img"):
@@ -65,7 +69,7 @@ class ImageExtractor:
 
         for a in soup.find_all("a", href=True):
             href = self.normalize_image_url(a.get("href"), base_url)
-            if href and self.looks_like_image(href):
+            if href and self.looks_like_image(href) and not self.is_unwanted_image(href):
                 add_url(href)
 
         for tag in soup.find_all(style=True):
@@ -73,42 +77,69 @@ class ImageExtractor:
             for bg_url in self.extract_urls_from_style(style):
                 add_url(bg_url)
 
-        meta_selectors = [
-            {"property": "og:image"},
-            {"name": "twitter:image"},
-            {"itemprop": "image"},
-        ]
-        for selector in meta_selectors:
-            for meta in soup.find_all("meta", attrs=selector):
-                add_url(meta.get("content"))
+        # meta_selectors = [
+        #     {"property": "og:image"},
+        #     {"name": "twitter:image"},
+        #     {"itemprop": "image"},
+        # ]
+        # for selector in meta_selectors:
+        #     for meta in soup.find_all("meta", attrs=selector):
+        #         add_url(meta.get("content"))
 
-        for link in soup.find_all("link", href=True):
-            rel = link.get("rel", [])
-            if isinstance(rel, list):
-                rel_text = " ".join(rel).lower()
-            else:
-                rel_text = str(rel).lower()
+        # for link in soup.find_all("link", href=True):
+        #     rel = link.get("rel", [])
+        #     if isinstance(rel, list):
+        #         rel_text = " ".join(rel).lower()
+        #     else:
+        #         rel_text = str(rel).lower()
 
-            href = link.get("href")
-            if "icon" in rel_text or "image" in rel_text or self.looks_like_image(href or ""):
-                add_url(href)
+        #     href = link.get("href")
+        #     if "icon" in rel_text or "image" in rel_text or self.looks_like_image(href or ""):
+        #         add_url(href)
 
         return found
 
     def parse_srcset(self, srcset_value: str):
-        results = []
-        for item in srcset_value.split(","):
-            part = item.strip().split(" ")[0].strip()
-            if part:
-                results.append(part)
-        return results
+        candidates = []
 
+        for item in srcset_value.split(","):
+            parts = item.strip().split()
+            if not parts:
+                continue
+
+            url = parts[0].strip()
+            score = 0
+
+            if len(parts) > 1:
+                descriptor = parts[1].strip().lower()
+                if descriptor.endswith("w"):
+                    try:
+                        score = int(descriptor[:-1])
+                    except ValueError:
+                        score = 0
+                elif descriptor.endswith("x"):
+                    try:
+                        score = float(descriptor[:-1]) * 1000
+                    except ValueError:
+                        score = 0
+
+            candidates.append((score, url))
+
+        if not candidates:
+            return []
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [candidates[0][1]]
+    
     def normalize_image_url(self, raw_url: str, base_url: str):
         if not raw_url:
             return None
 
         raw_url = raw_url.strip().strip("\"'")
         if raw_url.startswith("data:"):
+            return None
+        
+        if raw_url.startswith(("data:", "javascript:", "#", "about:")):
             return None
 
         if raw_url.startswith("//"):
@@ -133,9 +164,7 @@ class ImageExtractor:
                 ".gif",
                 ".bmp",
                 ".webp",
-                ".svg",
                 ".tiff",
-                ".ico",
                 ".avif",
             ]
         )
@@ -150,3 +179,14 @@ class ImageExtractor:
                 results.append(cleaned)
 
         return results
+    
+    def is_unwanted_image(self, url: str) -> bool:
+        lowered = url.lower()
+        blocked_keywords = [
+            "icon", "logo", "avatar", "favicon", "sprite", "badge", "thumb", "thumbnail"
+        ]
+        blocked_sizes = [
+            "16x16", "24x24", "32x32", "48x48", "64x64", "96x96", "128x128"
+        ]
+
+        return any(word in lowered for word in blocked_keywords + blocked_sizes)
