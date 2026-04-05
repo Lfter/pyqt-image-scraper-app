@@ -40,6 +40,7 @@ CONVERTIBLE_IMAGE_EXTENSIONS = frozenset(
         ".avif",
         ".tiff",
         ".bmp",
+        ".svg",
     }
 )
 

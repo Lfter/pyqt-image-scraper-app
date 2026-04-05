@@ -40,6 +40,41 @@ class ImageConverterTests(unittest.TestCase):
             self.assertTrue(Path(converted_path).exists())
             self.assertTrue(source_path.exists())
 
+    def test_render_svg_to_png_copy(self):
+        svg_markup = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" viewBox="0 0 24 12">
+            <rect width="24" height="12" fill="#ff6600" />
+        </svg>
+        """
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "vector.svg"
+            source_path.write_text(svg_markup, encoding="utf-8")
+
+            converter = ImageConverter()
+            converted_path = converter.convert_file(str(source_path))
+
+            output_path = Path(converted_path)
+            self.assertEqual(output_path.suffix.lower(), ".png")
+            self.assertTrue(output_path.exists())
+            self.assertTrue(source_path.exists())
+            self.assertEqual(output_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
+    def test_convert_avif_to_compatible_copy(self):
+        from PIL import Image
+        import pillow_avif  # noqa: F401
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "photo.avif"
+            Image.new("RGB", (4, 4), color=(50, 100, 150)).save(source_path, "AVIF")
+
+            converter = ImageConverter()
+            converted_path = converter.convert_file(str(source_path))
+
+            self.assertEqual(Path(converted_path).suffix.lower(), ".jpg")
+            self.assertTrue(Path(converted_path).exists())
+            self.assertTrue(source_path.exists())
+
     def test_skip_non_convertible_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "plain.png"
