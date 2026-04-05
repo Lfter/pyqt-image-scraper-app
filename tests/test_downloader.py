@@ -68,13 +68,14 @@ class ImageDownloaderTests(unittest.TestCase):
             progress_updates = []
             status_updates = []
 
-            success_count = downloader.download_images(
+            summary = downloader.download_images(
                 [image_url, image_url],
                 progress_callback=progress_updates.append,
                 status_callback=status_updates.append,
             )
 
-            self.assertEqual(success_count, 2)
+            self.assertEqual(summary.success_count, 2)
+            self.assertEqual(summary.converted_count, 0)
             self.assertEqual(progress_updates, [50, 100])
             self.assertEqual(status_updates, ["正在下载：1/2", "正在下载：2/2"])
             self.assertEqual(session.calls[0]["headers"]["Referer"], "https://example.com/page")
@@ -104,11 +105,11 @@ class ImageDownloaderTests(unittest.TestCase):
             helpers.LOG_DIR = Path(temp_dir) / "logs"
             try:
                 downloader = ImageDownloader(session, "https://example.com/page", temp_dir)
-                success_count = downloader.download_images([good_url, bad_url])
+                summary = downloader.download_images([good_url, bad_url])
             finally:
                 helpers.LOG_DIR = original_log_dir
 
-            self.assertEqual(success_count, 1)
+            self.assertEqual(summary.success_count, 1)
             failure_log = Path(temp_dir) / "logs" / "failed_images.txt"
             self.assertTrue(failure_log.exists())
             self.assertIn(bad_url, failure_log.read_text(encoding="utf-8"))
@@ -123,7 +124,54 @@ class ImageDownloaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "全部下载失败"):
                 downloader.download_images([bad_url])
 
+    def test_download_images_generates_compatible_copy_when_enabled(self):
+        image_url = "https://img.example.com/source.bmp"
+        session = FakeSession(
+            {
+                image_url: FakeResponse(
+                    headers={"Content-Type": "image/bmp"},
+                    chunks=[b"bitmap"],
+                )
+            }
+        )
+
+        class FakeConverter:
+            def __init__(self):
+                self.converted_paths = []
+
+            def should_convert(self, file_path: str) -> bool:
+                return file_path.endswith(".bmp")
+
+            def convert_file(self, file_path: str, make_unique_path=None):
+                del make_unique_path
+                compatible_path = file_path.replace(".bmp", "_compatible.jpg")
+                Path(compatible_path).write_bytes(b"jpg")
+                self.converted_paths.append((file_path, compatible_path))
+                return compatible_path
+
+        converter = FakeConverter()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloader = ImageDownloader(
+                session,
+                "https://example.com/page",
+                temp_dir,
+                auto_convert=True,
+                converter=converter,
+            )
+            status_updates = []
+
+            summary = downloader.download_images(
+                [image_url],
+                status_callback=status_updates.append,
+            )
+
+            self.assertEqual(summary.success_count, 1)
+            self.assertEqual(summary.converted_count, 1)
+            self.assertEqual(status_updates, ["正在下载：1/1", "正在转码：1/1"])
+            self.assertTrue(converter.converted_paths)
+            self.assertTrue(Path(converter.converted_paths[0][1]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -5,8 +5,8 @@ from urllib.parse import urlparse
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from scraper.downloader import DownloadSummary, ImageDownloader
 from scraper.extractor import ImageExtractor
-from scraper.downloader import ImageDownloader
 from utils.helpers import USER_AGENT
 
 
@@ -22,6 +22,8 @@ class ImageScraperThread(QThread):
         save_dir: str,
         mode: str = "static",
         image_urls=None,
+        auto_convert: bool = False,
+        keep_original: bool = True,
         session=None,
         extractor_factory=ImageExtractor,
         downloader_cls=ImageDownloader,
@@ -32,6 +34,8 @@ class ImageScraperThread(QThread):
         self.page_url = page_url.strip()
         self.mode = mode
         self.image_urls = image_urls
+        self.auto_convert = auto_convert
+        self.keep_original = keep_original
         self.extractor_factory = extractor_factory
         self.downloader_cls = downloader_cls
         self.now_provider = now_provider or datetime.now
@@ -41,7 +45,13 @@ class ImageScraperThread(QThread):
         if hasattr(self.session, "headers"):
             self.session.headers.update({"User-Agent": USER_AGENT})
 
-        self.downloader = self.downloader_cls(self.session, self.page_url, self.save_dir)
+        self.downloader = self.downloader_cls(
+            self.session,
+            self.page_url,
+            self.save_dir,
+            auto_convert=self.auto_convert,
+            keep_original=self.keep_original,
+        )
 
     def run(self):
         try:
@@ -52,14 +62,14 @@ class ImageScraperThread(QThread):
 
             self.status_changed.emit(f"共发现 {len(image_urls)} 张图片，开始下载...")
 
-            success_count = self.downloader.download_images(
+            summary = self.downloader.download_images(
                 image_urls,
                 progress_callback=self.progress_changed.emit,
                 status_callback=self.status_changed.emit,
             )
 
             self.progress_changed.emit(100)
-            self.finished_ok.emit(f"抓取完成，共下载 {success_count} 张图片。")
+            self.finished_ok.emit(self.build_finished_message(summary))
 
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -83,3 +93,12 @@ class ImageScraperThread(QThread):
         final_dir = os.path.join(base_dir, folder_name)
         os.makedirs(final_dir, exist_ok=True)
         return final_dir
+
+    def build_finished_message(self, summary) -> str:
+        if isinstance(summary, int):
+            summary = DownloadSummary(success_count=summary)
+
+        message = f"抓取完成，共下载 {summary.success_count} 张图片。"
+        if summary.converted_count:
+            message += f" 已生成 {summary.converted_count} 个兼容格式副本。"
+        return message

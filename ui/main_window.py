@@ -1,5 +1,6 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -99,6 +100,13 @@ class MainWindow(QMainWindow):
         self.url_input.setPlaceholderText("请输入网址，例如：https://example.com")
         self.url_input.setMinimumHeight(58)
         outer_layout.addWidget(self.url_input)
+
+        self.compatible_copy_checkbox = QCheckBox("自动生成兼容格式副本")
+        self.compatible_copy_checkbox.setChecked(True)
+        self.compatible_copy_checkbox.setStyleSheet(
+            "font-size: 16px; font-weight: 600; color: #445066; padding: 4px 2px;"
+        )
+        outer_layout.addWidget(self.compatible_copy_checkbox)
 
         self.status_label = QLabel("0% 正在准备...")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -211,6 +219,7 @@ class MainWindow(QMainWindow):
             save_dir,
             mode=self.current_mode,
             image_urls=image_urls,
+            auto_convert=self.compatible_copy_checkbox.isChecked(),
         )
         self.worker.progress_changed.connect(self.on_progress_changed)
         self.worker.status_changed.connect(self.on_status_changed)
@@ -232,6 +241,7 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(enabled or keep_start_button)
         self.url_input.setEnabled(enabled)
         self.mode_button.setEnabled(enabled)
+        self.compatible_copy_checkbox.setEnabled(enabled)
 
     def cleanup_dynamic_extractor(self):
         if self.dynamic_extractor:
@@ -250,7 +260,7 @@ class MainWindow(QMainWindow):
 
     def on_status_changed(self, text: str):
         current = self.progress_bar.value()
-        if text.startswith(("正在下载", "正在获取", "正在整理", "共发现")):
+        if text.startswith(("正在下载", "正在转码", "正在获取", "正在整理", "共发现")):
             self.status_label.setText(f"{current}% {text}")
             return
 

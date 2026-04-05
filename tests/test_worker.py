@@ -43,10 +43,13 @@ class FailIfCalledExtractor:
 class FakeDownloader:
     instances = []
 
-    def __init__(self, session, page_url, save_dir):
+    def __init__(self, session, page_url, save_dir, auto_convert=False, keep_original=True, converter=None):
         self.session = session
         self.page_url = page_url
         self.save_dir = save_dir
+        self.auto_convert = auto_convert
+        self.keep_original = keep_original
+        self.converter = converter
         self.calls = []
         self.__class__.instances.append(self)
 
@@ -98,6 +101,7 @@ class ImageScraperThreadTests(unittest.TestCase):
                 FakeDownloader.instances[-1].calls,
                 [["https://cdn.example.com/a.jpg"]],
             )
+            self.assertFalse(FakeDownloader.instances[-1].auto_convert)
 
     def test_run_deduplicates_pre_extracted_urls(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -128,6 +132,40 @@ class ImageScraperThreadTests(unittest.TestCase):
                 [["https://cdn.example.com/a.jpg", "https://cdn.example.com/b.jpg"]],
             )
             self.assertEqual(finished_messages, ["抓取完成，共下载 2 张图片。"])
+
+    def test_run_reports_generated_compatible_copies(self):
+        class ConvertingDownloader(FakeDownloader):
+            def download_images(self, image_urls, progress_callback=None, status_callback=None):
+                del progress_callback, status_callback
+                self.calls.append(list(image_urls))
+
+                class Summary:
+                    success_count = len(image_urls)
+                    converted_count = 1
+
+                return Summary()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            thread = ImageScraperThread(
+                "https://example.com/gallery",
+                temp_dir,
+                image_urls=["https://cdn.example.com/a.webp"],
+                auto_convert=True,
+                session=DummySession(),
+                extractor_factory=FailIfCalledExtractor,
+                downloader_cls=ConvertingDownloader,
+                now_provider=lambda: datetime(2024, 1, 2, 3, 4, 5),
+            )
+
+            finished_messages = []
+            thread.finished_ok.connect(finished_messages.append)
+            thread.run()
+
+            self.assertEqual(
+                finished_messages,
+                ["抓取完成，共下载 1 张图片。 已生成 1 个兼容格式副本。"],
+            )
+            self.assertTrue(ConvertingDownloader.instances[-1].auto_convert)
 
 
 if __name__ == "__main__":

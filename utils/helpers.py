@@ -26,6 +26,23 @@ VALID_IMAGE_EXTENSIONS = frozenset(
     }
 )
 
+COMMON_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+    }
+)
+
+CONVERTIBLE_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".webp",
+        ".avif",
+        ".tiff",
+        ".bmp",
+    }
+)
+
 CONTENT_TYPE_TO_EXTENSION = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -106,3 +123,9 @@ def append_failed_image_log(image_url: str, error: Exception) -> None:
     failed_images_log = get_log_dir() / "failed_images.txt"
     with failed_images_log.open("a", encoding="utf-8") as file_obj:
         file_obj.write(f"{image_url}\n|{error}\n")
+
+
+def append_failed_conversion_log(image_path: str, error: Exception) -> None:
+    failed_conversions_log = get_log_dir() / "failed_conversions.txt"
+    with failed_conversions_log.open("a", encoding="utf-8") as file_obj:
+        file_obj.write(f"{image_path}\n|{error}\n")
