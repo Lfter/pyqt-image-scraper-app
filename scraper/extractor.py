@@ -2,7 +2,12 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from utils.helpers import setup_logger
+from utils.helpers import (
+    UNWANTED_IMAGE_KEYWORDS,
+    UNWANTED_IMAGE_SIZE_HINTS,
+    VALID_IMAGE_EXTENSIONS,
+    setup_logger,
+)
 
 
 class ImageExtractor:
@@ -10,8 +15,10 @@ class ImageExtractor:
         self.session = session
         self.logger = setup_logger()
 
-
     def fetch_html(self, url: str) -> str:
+        if self.session is None:
+            raise ValueError("当前提取器没有可用的 HTTP 会话。")
+
         self.logger.info(f"开始请求网页：{url}")
         response = self.session.get(url, timeout=20)
         response.raise_for_status()
@@ -77,25 +84,21 @@ class ImageExtractor:
             for bg_url in self.extract_urls_from_style(style):
                 add_url(bg_url)
 
-        # meta_selectors = [
-        #     {"property": "og:image"},
-        #     {"name": "twitter:image"},
-        #     {"itemprop": "image"},
-        # ]
-        # for selector in meta_selectors:
-        #     for meta in soup.find_all("meta", attrs=selector):
-        #         add_url(meta.get("content"))
+        meta_selectors = [
+            {"property": "og:image"},
+            {"name": "twitter:image"},
+            {"itemprop": "image"},
+        ]
+        for selector in meta_selectors:
+            for meta in soup.find_all("meta", attrs=selector):
+                add_url(meta.get("content"))
 
-        # for link in soup.find_all("link", href=True):
-        #     rel = link.get("rel", [])
-        #     if isinstance(rel, list):
-        #         rel_text = " ".join(rel).lower()
-        #     else:
-        #         rel_text = str(rel).lower()
-
-        #     href = link.get("href")
-        #     if "icon" in rel_text or "image" in rel_text or self.looks_like_image(href or ""):
-        #         add_url(href)
+        for link in soup.find_all("link", href=True):
+            rel = link.get("rel", [])
+            rel_text = " ".join(rel).lower() if isinstance(rel, list) else str(rel).lower()
+            href = link.get("href")
+            if "icon" in rel_text or "image" in rel_text or self.looks_like_image(href or ""):
+                add_url(href)
 
         return found
 
@@ -136,9 +139,6 @@ class ImageExtractor:
             return None
 
         raw_url = raw_url.strip().strip("\"'")
-        if raw_url.startswith("data:"):
-            return None
-        
         if raw_url.startswith(("data:", "javascript:", "#", "about:")):
             return None
 
@@ -155,19 +155,7 @@ class ImageExtractor:
 
     def looks_like_image(self, url: str) -> bool:
         path = urlparse(url).path.lower()
-        return any(
-            path.endswith(ext)
-            for ext in [
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".gif",
-                ".bmp",
-                ".webp",
-                ".tiff",
-                ".avif",
-            ]
-        )
+        return any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
 
     def extract_urls_from_style(self, style_text: str):
         matches = re.findall(r"url\((.*?)\)", style_text, flags=re.IGNORECASE)
@@ -182,11 +170,5 @@ class ImageExtractor:
     
     def is_unwanted_image(self, url: str) -> bool:
         lowered = url.lower()
-        blocked_keywords = [
-            "icon", "logo", "avatar", "favicon", "sprite", "badge", "thumb", "thumbnail"
-        ]
-        blocked_sizes = [
-            "16x16", "24x24", "32x32", "48x48", "64x64", "96x96", "128x128"
-        ]
-
-        return any(word in lowered for word in blocked_keywords + blocked_sizes)
+        blocked_markers = UNWANTED_IMAGE_KEYWORDS + UNWANTED_IMAGE_SIZE_HINTS
+        return any(marker in lowered for marker in blocked_markers)

@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 )
 
 from scraper.worker import ImageScraperThread
-from scraper.dynamic_extractor import DynamicImageExtractor
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -25,7 +25,6 @@ class MainWindow(QMainWindow):
         self.pending_save_dir = ""
         self.dynamic_extractor = None
         self.init_ui()
-        self.current_mode = "static"
 
     def init_ui(self):
         self.setWindowTitle("网页图片抓取工具")
@@ -128,141 +127,6 @@ class MainWindow(QMainWindow):
         outer_layout.addLayout(button_row)
 
     def toggle_mode(self):
-        if self.current_mode == "static":
-            self.current_mode = "dynamic"
-            self.mode_button.setText("当前模式：动态抓取")
-            QMessageBox.information(self, "提示", "动态模式将打开浏览器，请在浏览器中完成登录后等待页面加载。")
-        else:
-            self.current_mode = "static"
-            self.mode_button.setText("当前模式：静态抓取")
-
-    def choose_folder_and_start(self):
-        # 动态模式：第二次点击，表示“我已登录，开始抓取”
-        if self.current_mode == "dynamic" and self.dynamic_login_pending:
-            try:
-                self.progress_bar.setValue(0)
-                self.start_button.setEnabled(False)
-                self.url_input.setEnabled(False)
-                self.mode_button.setEnabled(False)
-
-                self.status_label.setText("正在从当前页面提取图片链接...")
-
-                image_urls = self.dynamic_extractor.extract_from_current_page(self.pending_page_url)
-
-                self.worker = ImageScraperThread(
-                    self.pending_page_url,
-                    self.pending_save_dir,
-                    mode="dynamic",
-                    image_urls=image_urls,
-                )
-                self.worker.progress_changed.connect(self.on_progress_changed)
-                self.worker.status_changed.connect(self.on_status_changed)
-                self.worker.finished_ok.connect(self.on_finished_ok)
-                self.worker.failed.connect(self.on_failed)
-                self.worker.start()
-            except Exception as exc:
-                self.start_button.setEnabled(True)
-                self.url_input.setEnabled(True)
-                self.mode_button.setEnabled(True)
-                QMessageBox.critical(self, "错误", str(exc))
-            return
-
-        page_url = self.url_input.text().strip()
-        if not page_url:
-            QMessageBox.warning(self, "提示", "请先输入网页地址。")
-            return
-
-        if not page_url.startswith(("http://", "https://")):
-            page_url = "https://" + page_url
-            self.url_input.setText(page_url)
-
-        save_dir = QFileDialog.getExistingDirectory(self, "选择图片保存文件夹")
-        if not save_dir:
-            return
-
-        # 动态模式：第一次点击，先打开浏览器等待登录
-        if self.current_mode == "dynamic":
-            try:
-                self.dynamic_extractor = DynamicImageExtractor()
-                self.dynamic_extractor.open_page(page_url)
-
-                self.pending_page_url = page_url
-                self.pending_save_dir = save_dir
-                self.dynamic_login_pending = True
-
-                self.start_button.setText("我已登录，开始抓取")
-                self.url_input.setEnabled(False)
-                self.mode_button.setEnabled(False)
-                QMessageBox.information(
-                    self,
-                    "动态模式",
-                    "浏览器已打开，请先在浏览器中完成登录，并停留在你要抓取的页面，然后回来点击“我已登录，开始抓取”。"
-                )
-            except Exception as exc:
-                if self.dynamic_extractor:
-                    self.dynamic_extractor.close()
-                    self.dynamic_extractor = None
-                QMessageBox.critical(self, "错误", str(exc))
-            return
-
-        # 静态模式：直接抓取
-        self.progress_bar.setValue(0)
-        self.start_button.setEnabled(False)
-        self.url_input.setEnabled(False)
-        self.mode_button.setEnabled(False)
-
-        self.worker = ImageScraperThread(page_url, save_dir, mode="static")
-        self.worker.progress_changed.connect(self.on_progress_changed)
-        self.worker.status_changed.connect(self.on_status_changed)
-        self.worker.finished_ok.connect(self.on_finished_ok)
-        self.worker.failed.connect(self.on_failed)
-        self.worker.start()
-
-    def on_progress_changed(self, value: int):
-        self.progress_bar.setValue(value)
-
-    def on_status_changed(self, text: str):
-        current = self.progress_bar.value()
-        if text.startswith("正在下载") or text.startswith("正在获取") or text.startswith("共发现"):
-            self.status_label.setText(f"{current}% {text}")
-        else:
-            self.status_label.setText(text)
-
-    def on_finished_ok(self, message: str):
-        self.start_button.setEnabled(True)
-        self.url_input.setEnabled(True)
-        self.mode_button.setEnabled(True)
-
-        if self.current_mode == "dynamic":
-            self.start_button.setText("开始抓取")
-            self.dynamic_login_pending = False
-            self.pending_page_url = ""
-            self.pending_save_dir = ""
-            if self.dynamic_extractor:
-                self.dynamic_extractor.close()
-                self.dynamic_extractor = None
-
-        self.status_label.setText("100% 抓取完成")
-        QMessageBox.information(self, "完成", message)
-
-    def on_failed(self, error_message: str):
-        self.start_button.setEnabled(True)
-        self.url_input.setEnabled(True)
-        self.mode_button.setEnabled(True)
-
-        if self.current_mode == "dynamic":
-            self.start_button.setText("开始抓取")
-            self.dynamic_login_pending = False
-            self.pending_page_url = ""
-            self.pending_save_dir = ""
-            if self.dynamic_extractor:
-                self.dynamic_extractor.close()
-                self.dynamic_extractor = None
-
-        self.status_label.setText("抓取失败")
-        QMessageBox.critical(self, "错误", error_message)
-    
-    def toggle_mode(self):
         if self.dynamic_login_pending:
             QMessageBox.warning(self, "提示", "当前正在等待动态模式登录完成，请先完成或结束本次操作。")
             return
@@ -270,6 +134,140 @@ class MainWindow(QMainWindow):
         if self.current_mode == "static":
             self.current_mode = "dynamic"
             self.mode_button.setText("当前模式：动态抓取")
-        else:
-            self.current_mode = "static"
-            self.mode_button.setText("当前模式：静态抓取")
+            QMessageBox.information(self, "提示", "动态模式将打开浏览器，请在浏览器中完成登录后等待页面加载。")
+            return
+
+        self.current_mode = "static"
+        self.mode_button.setText("当前模式：静态抓取")
+
+    def choose_folder_and_start(self):
+        if self.current_mode == "dynamic" and self.dynamic_login_pending:
+            self.start_dynamic_scraping()
+            return
+
+        page_url = self.normalize_page_url(self.url_input.text())
+        if not page_url:
+            QMessageBox.warning(self, "提示", "请先输入网页地址。")
+            return
+
+        self.url_input.setText(page_url)
+        save_dir = QFileDialog.getExistingDirectory(self, "选择图片保存文件夹")
+        if not save_dir:
+            return
+
+        if self.current_mode == "dynamic":
+            self.prepare_dynamic_scraping(page_url, save_dir)
+            return
+
+        self.launch_worker(page_url, save_dir)
+
+    def normalize_page_url(self, raw_url: str) -> str:
+        page_url = raw_url.strip()
+        if not page_url:
+            return ""
+        if not page_url.startswith(("http://", "https://")):
+            page_url = "https://" + page_url
+        return page_url
+
+    def prepare_dynamic_scraping(self, page_url: str, save_dir: str):
+        try:
+            self.dynamic_extractor = self.create_dynamic_extractor()
+            self.dynamic_extractor.open_page(page_url)
+
+            self.pending_page_url = page_url
+            self.pending_save_dir = save_dir
+            self.dynamic_login_pending = True
+
+            self.start_button.setText("我已登录，开始抓取")
+            self.set_controls_enabled(False, keep_start_button=True)
+            QMessageBox.information(
+                self,
+                "动态模式",
+                "浏览器已打开，请先在浏览器中完成登录，并停留在你要抓取的页面，然后回来点击“我已登录，开始抓取”。"
+            )
+        except Exception as exc:
+            self.cleanup_dynamic_extractor()
+            QMessageBox.critical(self, "错误", str(exc))
+
+    def start_dynamic_scraping(self):
+        try:
+            self.progress_bar.setValue(0)
+            self.set_controls_enabled(False)
+            self.status_label.setText("正在从当前页面提取图片链接...")
+
+            image_urls = self.dynamic_extractor.extract_from_current_page(self.pending_page_url)
+            self.launch_worker(self.pending_page_url, self.pending_save_dir, image_urls=image_urls)
+        except Exception as exc:
+            self.set_controls_enabled(True)
+            self.reset_dynamic_state()
+            QMessageBox.critical(self, "错误", str(exc))
+
+    def launch_worker(self, page_url: str, save_dir: str, image_urls=None):
+        self.progress_bar.setValue(0)
+        self.set_controls_enabled(False)
+
+        self.worker = ImageScraperThread(
+            page_url,
+            save_dir,
+            mode=self.current_mode,
+            image_urls=image_urls,
+        )
+        self.worker.progress_changed.connect(self.on_progress_changed)
+        self.worker.status_changed.connect(self.on_status_changed)
+        self.worker.finished_ok.connect(self.on_finished_ok)
+        self.worker.failed.connect(self.on_failed)
+        self.worker.start()
+
+    def create_dynamic_extractor(self):
+        try:
+            from scraper.dynamic_extractor import DynamicImageExtractor
+        except ImportError as exc:
+            raise RuntimeError(
+                "动态模式依赖 Playwright，请先安装 `playwright` 并执行 `playwright install`。"
+            ) from exc
+
+        return DynamicImageExtractor()
+
+    def set_controls_enabled(self, enabled: bool, keep_start_button: bool = False):
+        self.start_button.setEnabled(enabled or keep_start_button)
+        self.url_input.setEnabled(enabled)
+        self.mode_button.setEnabled(enabled)
+
+    def cleanup_dynamic_extractor(self):
+        if self.dynamic_extractor:
+            self.dynamic_extractor.close()
+            self.dynamic_extractor = None
+
+    def reset_dynamic_state(self):
+        self.dynamic_login_pending = False
+        self.pending_page_url = ""
+        self.pending_save_dir = ""
+        self.start_button.setText("开始抓取")
+        self.cleanup_dynamic_extractor()
+
+    def on_progress_changed(self, value: int):
+        self.progress_bar.setValue(value)
+
+    def on_status_changed(self, text: str):
+        current = self.progress_bar.value()
+        if text.startswith(("正在下载", "正在获取", "正在整理", "共发现")):
+            self.status_label.setText(f"{current}% {text}")
+            return
+
+        self.status_label.setText(text)
+
+    def on_finished_ok(self, message: str):
+        self.set_controls_enabled(True)
+        if self.current_mode == "dynamic":
+            self.reset_dynamic_state()
+
+        self.status_label.setText("100% 抓取完成")
+        QMessageBox.information(self, "完成", message)
+
+    def on_failed(self, error_message: str):
+        self.set_controls_enabled(True)
+        if self.current_mode == "dynamic":
+            self.reset_dynamic_state()
+
+        self.status_label.setText("抓取失败")
+        QMessageBox.critical(self, "错误", error_message)

@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from urllib.parse import urlparse
+
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -15,28 +16,36 @@ class ImageScraperThread(QThread):
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, page_url: str, save_dir: str, mode: str = "static", image_urls=None, parent=None):
+    def __init__(
+        self,
+        page_url: str,
+        save_dir: str,
+        mode: str = "static",
+        image_urls=None,
+        session=None,
+        extractor_factory=ImageExtractor,
+        downloader_cls=ImageDownloader,
+        now_provider=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.page_url = page_url.strip()
-        self.base_save_dir = save_dir
-        self.save_dir = self.prepare_task_save_dir(save_dir)
         self.mode = mode
         self.image_urls = image_urls
+        self.extractor_factory = extractor_factory
+        self.downloader_cls = downloader_cls
+        self.now_provider = now_provider or datetime.now
+        self.save_dir = self.prepare_task_save_dir(save_dir)
 
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": USER_AGENT})
+        self.session = session or requests.Session()
+        if hasattr(self.session, "headers"):
+            self.session.headers.update({"User-Agent": USER_AGENT})
 
-        self.downloader = ImageDownloader(self.session, self.page_url, self.save_dir)
+        self.downloader = self.downloader_cls(self.session, self.page_url, self.save_dir)
 
     def run(self):
         try:
-            self.status_changed.emit("正在获取网页内容...")
-
-            if self.image_urls is not None:
-                image_urls = self.image_urls
-            else:
-                extractor = ImageExtractor(self.session)
-                image_urls = extractor.extract_from_page(self.page_url)
+            image_urls = self.resolve_image_urls()
 
             if not image_urls:
                 raise ValueError("没有在该网页中找到可下载的图片。")
@@ -55,11 +64,20 @@ class ImageScraperThread(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
 
+    def resolve_image_urls(self):
+        if self.image_urls is not None:
+            self.status_changed.emit("正在整理图片链接...")
+            return list(dict.fromkeys(self.image_urls))
+
+        self.status_changed.emit("正在获取网页内容...")
+        extractor = self.extractor_factory(self.session)
+        return extractor.extract_from_page(self.page_url)
+
     def prepare_task_save_dir(self, base_dir: str) -> str:
         parsed = urlparse(self.page_url)
         domain = parsed.netloc.replace(".", "_") if parsed.netloc else "image_scraper"
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = self.now_provider().strftime("%Y%m%d_%H%M%S")
         folder_name = f"{domain}_{timestamp}"
 
         final_dir = os.path.join(base_dir, folder_name)

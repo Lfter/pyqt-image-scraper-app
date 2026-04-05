@@ -3,7 +3,14 @@ import os
 import re
 from urllib.parse import urlparse, unquote
 
-from utils.helpers import USER_AGENT,setup_logger
+from utils.helpers import (
+    CONTENT_TYPE_TO_EXTENSION,
+    IMAGE_CATEGORY_MAP,
+    USER_AGENT,
+    VALID_IMAGE_EXTENSIONS,
+    append_failed_image_log,
+    setup_logger,
+)
 
 
 class ImageDownloader:
@@ -12,6 +19,7 @@ class ImageDownloader:
         self.logger = setup_logger()
         self.page_url = page_url
         self.save_dir = save_dir
+        self.request_headers = {"Referer": self.page_url, "User-Agent": USER_AGENT}
 
     def download_images(self, image_urls, progress_callback=None, status_callback=None):
         total = len(image_urls)
@@ -23,37 +31,12 @@ class ImageDownloader:
 
         for index, image_url in enumerate(image_urls, start=1):
             try:
-                response = self.session.get(
-                    image_url,
-                    timeout=20,
-                    stream=True,
-                    headers={"Referer": self.page_url, "User-Agent": USER_AGENT},
-                )
-                response.raise_for_status()
-
-                content_type = (response.headers.get("Content-Type") or "").lower()
-                ext = self.decide_extension(image_url, content_type)
-                category = self.classify_image(ext, content_type)
-
-                category_dir = os.path.join(self.save_dir, category)
-                os.makedirs(category_dir, exist_ok=True)
-
-                filename = self.build_filename(image_url, ext)
-                file_path = os.path.join(category_dir, filename)
-                file_path = self.make_unique_path(file_path)
-
-                with open(file_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-
+                self.download_image(image_url)
                 success_count += 1
-
             except Exception as exc:
                 self.logger.warning(f"图片下载失败：{image_url}，错误：{exc}")
-                os.makedirs("logs", exist_ok=True)
-                with open("logs/failed_images.txt", "a", encoding="utf-8") as f:
-                    f.write(f"{image_url}\n|{str(exc)}\n")
+                append_failed_image_log(image_url, exc)
+
             progress = int(index / total * 100)
 
             if progress_callback:
@@ -69,63 +52,48 @@ class ImageDownloader:
 
         return success_count
 
+    def download_image(self, image_url: str) -> str:
+        response = self.session.get(
+            image_url,
+            timeout=20,
+            stream=True,
+            headers=self.request_headers,
+        )
+        response.raise_for_status()
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        ext = self.decide_extension(image_url, content_type)
+        category = self.classify_image(ext, content_type)
+
+        category_dir = os.path.join(self.save_dir, category)
+        os.makedirs(category_dir, exist_ok=True)
+
+        filename = self.build_filename(image_url, ext)
+        file_path = os.path.join(category_dir, filename)
+        file_path = self.make_unique_path(file_path)
+
+        with open(file_path, "wb") as file_obj:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    file_obj.write(chunk)
+
+        return file_path
+
     def decide_extension(self, image_url: str, content_type: str) -> str:
         path = urlparse(image_url).path
         _, ext = os.path.splitext(path)
         ext = ext.lower()
 
-        valid_exts = {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".gif",
-            ".bmp",
-            ".webp",
-            ".svg",
-            ".tiff",
-            ".ico",
-            ".avif",
-        }
-
-        if ext in valid_exts:
+        if ext in VALID_IMAGE_EXTENSIONS:
             return ext
 
-        mapping = {
-            "image/jpeg": ".jpg",
-            "image/png": ".png",
-            "image/gif": ".gif",
-            "image/bmp": ".bmp",
-            "image/webp": ".webp",
-            "image/svg+xml": ".svg",
-            "image/tiff": ".tiff",
-            "image/x-icon": ".ico",
-            "image/vnd.microsoft.icon": ".ico",
-            "image/avif": ".avif",
-        }
-
-        return mapping.get(content_type.split(";")[0].strip(), ".jpg")
+        normalized_content_type = content_type.split(";")[0].strip()
+        return CONTENT_TYPE_TO_EXTENSION.get(normalized_content_type, ".jpg")
 
     def classify_image(self, ext: str, content_type: str) -> str:
         ext = ext.lower()
-
-        if ext in {".jpg", ".jpeg"}:
-            return "JPEG"
-        if ext == ".png":
-            return "PNG"
-        if ext == ".gif":
-            return "GIF"
-        if ext == ".webp":
-            return "WEBP"
-        if ext == ".svg":
-            return "SVG"
-        if ext == ".bmp":
-            return "BMP"
-        if ext == ".tiff":
-            return "TIFF"
-        if ext == ".ico":
-            return "ICO"
-        if ext == ".avif":
-            return "AVIF"
+        if ext in IMAGE_CATEGORY_MAP:
+            return IMAGE_CATEGORY_MAP[ext]
         if "image" in content_type:
             return "OTHER_IMAGE"
 
