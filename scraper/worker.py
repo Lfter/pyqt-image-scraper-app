@@ -1,3 +1,6 @@
+import os
+from datetime import datetime
+from urllib.parse import urlparse
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -15,7 +18,8 @@ class ImageScraperThread(QThread):
     def __init__(self, page_url: str, save_dir: str, mode: str = "static", image_urls=None, parent=None):
         super().__init__(parent)
         self.page_url = page_url.strip()
-        self.save_dir = save_dir
+        self.base_save_dir = save_dir
+        self.save_dir = self.prepare_task_save_dir(save_dir)
         self.mode = mode
         self.image_urls = image_urls
 
@@ -50,3 +54,14 @@ class ImageScraperThread(QThread):
 
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def prepare_task_save_dir(self, base_dir: str) -> str:
+        parsed = urlparse(self.page_url)
+        domain = parsed.netloc.replace(".", "_") if parsed.netloc else "image_scraper"
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = f"{domain}_{timestamp}"
+
+        final_dir = os.path.join(base_dir, folder_name)
+        os.makedirs(final_dir, exist_ok=True)
+        return final_dir
