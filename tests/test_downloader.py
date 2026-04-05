@@ -194,6 +194,30 @@ class ImageDownloaderTests(unittest.TestCase):
             self.assertEqual(Path(saved_path).name, "photo.jpg")
             self.assertTrue(Path(saved_path).exists())
 
+    def test_download_image_strips_post_extension_processing_suffix(self):
+        preview_url = (
+            "https://img.example.com/uploads/photo.JPG"
+            "~tplv-9lv23dm2t1-resize-animforce-v1:480:1000:gif.avif?sign=abc"
+        )
+        original_url = "https://img.example.com/uploads/photo.JPG?sign=abc"
+        session = FakeSession(
+            {
+                original_url: FakeResponse(
+                    headers={"Content-Type": "image/jpeg"},
+                    chunks=[b"original"],
+                    url=original_url,
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloader = ImageDownloader(session, "https://example.com/page", temp_dir)
+            saved_path = downloader.download_image(preview_url)
+
+            self.assertEqual(session.calls[0]["url"], original_url)
+            self.assertEqual(Path(saved_path).name, "photo.JPG")
+            self.assertTrue(Path(saved_path).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

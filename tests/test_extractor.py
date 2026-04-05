@@ -87,6 +87,48 @@ class ImageExtractorTests(unittest.TestCase):
             ],
         )
 
+    def test_extract_image_urls_uses_custom_source_like_attributes(self):
+        soup = BeautifulSoup(
+            """
+            <html>
+                <body>
+                    <img
+                        src="//cdn.example.com/uploads/photo.JPG~thumb.webp"
+                        srcstring="//cdn.example.com/uploads/photo.JPG~tplv-abc:480:1000:gif.avif"
+                    />
+                </body>
+            </html>
+            """,
+            "html.parser",
+        )
+
+        image_urls = self.extractor.extract_image_urls(soup, "https://example.com/post")
+
+        self.assertEqual(
+            image_urls,
+            ["https://cdn.example.com/uploads/photo.JPG~tplv-abc:480:1000:gif.avif"],
+        )
+
+    def test_extract_image_urls_ignores_non_url_custom_image_metadata(self):
+        soup = BeautifulSoup(
+            """
+            <html>
+                <body>
+                    <img
+                        src="/images/photo.jpg"
+                        imagex-type="vue2"
+                        imagex-version="2.1.1"
+                    />
+                </body>
+            </html>
+            """,
+            "html.parser",
+        )
+
+        image_urls = self.extractor.extract_image_urls(soup, "https://example.com/post")
+
+        self.assertEqual(image_urls, ["https://example.com/images/photo.jpg"])
+
 
 if __name__ == "__main__":
     unittest.main()

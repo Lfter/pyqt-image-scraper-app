@@ -32,6 +32,44 @@ class ImageExtractor:
         ("data-flickity-lazyload", 200),
         ("src", 100),
     ]
+    GENERIC_IMAGE_ATTR_KEYWORDS = (
+        "origin",
+        "original",
+        "master",
+        "download",
+        "raw",
+        "full",
+        "zoom",
+        "hires",
+        "large",
+        "big",
+        "src",
+        "image",
+        "img",
+        "photo",
+        "poster",
+        "url",
+        "file",
+        "href",
+    )
+    IGNORED_GENERIC_ATTRS = {
+        "alt",
+        "class",
+        "decoding",
+        "height",
+        "loading",
+        "sizes",
+        "style",
+        "title",
+        "width",
+    }
+    IMAGE_EXTENSION_PATTERN = "|".join(
+        sorted(
+            {re.escape(ext.lstrip(".")) for ext in VALID_IMAGE_EXTENSIONS},
+            key=len,
+            reverse=True,
+        )
+    )
     RESIZE_QUERY_KEYS = frozenset(
         {
             "w",
@@ -100,6 +138,9 @@ class ImageExtractor:
             for attr, base_score in self.HIGH_PRIORITY_IMAGE_ATTRS:
                 add_url(img.get(attr), score=base_score)
 
+            for candidate, base_score in self.iter_generic_image_attr_candidates(img):
+                add_url(candidate, score=base_score)
+
             srcset_candidate = self.pick_best_srcset_candidate(
                 img.get("srcset") or img.get("data-srcset")
             )
@@ -112,6 +153,9 @@ class ImageExtractor:
                 add_url(wrapped_link.get("href"), score=300)
 
         for source in soup.find_all("source"):
+            for candidate, base_score in self.iter_generic_image_attr_candidates(source):
+                add_url(candidate, score=base_score)
+
             srcset_candidate = self.pick_best_srcset_candidate(
                 source.get("srcset") or source.get("data-srcset")
             )
@@ -211,7 +255,9 @@ class ImageExtractor:
 
     def build_image_identity(self, image_url: str) -> str:
         parsed = urlparse(image_url)
-        normalized_path = self.strip_resize_suffix(parsed.path)
+        normalized_path = self.strip_resize_suffix(
+            self.strip_post_extension_transform_suffix(parsed.path)
+        )
         filtered_query = self.filter_resize_query(parsed.query)
         return urlunparse(
             (
@@ -226,6 +272,10 @@ class ImageExtractor:
 
     def strip_resize_suffix(self, path: str) -> str:
         return re.sub(r"([_-])\d{2,5}x\d{2,5}(?=\.[a-z0-9]+$)", "", path, flags=re.IGNORECASE)
+
+    def strip_post_extension_transform_suffix(self, path: str) -> str:
+        pattern = rf"(\.(?:{self.IMAGE_EXTENSION_PATTERN}))(?:[~!@].+)$"
+        return re.sub(pattern, r"\1", path, flags=re.IGNORECASE)
 
     def filter_resize_query(self, query: str) -> str:
         if not query:
@@ -245,6 +295,7 @@ class ImageExtractor:
         return min(max(path_bonus, query_bonus) // 10, 180)
 
     def extract_size_score_from_path(self, path: str) -> int:
+        path = self.strip_post_extension_transform_suffix(path)
         match = re.search(r"(\d{2,5})x(\d{2,5})(?=\.[a-z0-9]+$)", path, flags=re.IGNORECASE)
         if not match:
             return 0
@@ -259,7 +310,78 @@ class ImageExtractor:
 
     def looks_like_image(self, url: str) -> bool:
         path = urlparse(url).path.lower()
-        return any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
+        if any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
+            return True
+
+        stripped_path = self.strip_post_extension_transform_suffix(path)
+        return any(stripped_path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
+
+    def iter_generic_image_attr_candidates(self, tag):
+        known_attrs = {attr for attr, _ in self.HIGH_PRIORITY_IMAGE_ATTRS}
+        known_attrs.update({"srcset", "data-srcset"})
+
+        for attr_name, attr_value in tag.attrs.items():
+            normalized_attr_name = str(attr_name).lower()
+
+            if (
+                normalized_attr_name in known_attrs
+                or normalized_attr_name in self.IGNORED_GENERIC_ATTRS
+            ):
+                continue
+
+            if "srcset" in normalized_attr_name:
+                best_candidate = self.pick_best_srcset_candidate(self.stringify_attr_value(attr_value))
+                if best_candidate and self.looks_like_image_reference(best_candidate[0]):
+                    item, srcset_score = best_candidate
+                    yield item, self.score_generic_image_attr_name(normalized_attr_name) + srcset_score
+                continue
+
+            if not self.looks_like_image_attr_name(normalized_attr_name):
+                continue
+
+            for item in self.expand_attr_values(attr_value):
+                if self.looks_like_image_reference(item):
+                    yield item, self.score_generic_image_attr_name(normalized_attr_name)
+
+    def expand_attr_values(self, attr_value):
+        if isinstance(attr_value, (list, tuple)):
+            return [str(item).strip() for item in attr_value if isinstance(item, str) and item.strip()]
+        if isinstance(attr_value, str) and attr_value.strip():
+            return [attr_value.strip()]
+        return []
+
+    def stringify_attr_value(self, attr_value):
+        if isinstance(attr_value, (list, tuple)):
+            return ", ".join(str(item) for item in attr_value if isinstance(item, str))
+        if isinstance(attr_value, str):
+            return attr_value
+        return ""
+
+    def looks_like_image_attr_name(self, attr_name: str) -> bool:
+        return any(keyword in attr_name for keyword in self.GENERIC_IMAGE_ATTR_KEYWORDS)
+
+    def looks_like_image_reference(self, value: str) -> bool:
+        lowered = value.strip().lower()
+        if not lowered:
+            return False
+        if lowered.startswith(("http://", "https://", "//", "/", "./", "../")):
+            return True
+        if re.search(rf"\.(?:{self.IMAGE_EXTENSION_PATTERN})(?:$|[?#~!@])", lowered):
+            return True
+        return False
+
+    def score_generic_image_attr_name(self, attr_name: str) -> int:
+        if any(keyword in attr_name for keyword in ("origin", "original", "master", "download", "raw")):
+            return 340
+        if any(keyword in attr_name for keyword in ("full", "zoom", "hires")):
+            return 300
+        if any(keyword in attr_name for keyword in ("large", "big", "poster")):
+            return 240
+        if any(keyword in attr_name for keyword in ("src", "image", "img", "photo")):
+            return 180
+        if any(keyword in attr_name for keyword in ("url", "file", "href")):
+            return 160
+        return 120
 
     def extract_urls_from_style(self, style_text: str):
         matches = re.findall(r"url\((.*?)\)", style_text, flags=re.IGNORECASE)

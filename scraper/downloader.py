@@ -23,6 +23,13 @@ class DownloadSummary:
 
 
 class ImageDownloader:
+    IMAGE_EXTENSION_PATTERN = "|".join(
+        sorted(
+            {re.escape(ext.lstrip(".")) for ext in VALID_IMAGE_EXTENSIONS},
+            key=len,
+            reverse=True,
+        )
+    )
     RESIZE_QUERY_KEYS = frozenset(
         {
             "w",
@@ -162,21 +169,23 @@ class ImageDownloader:
 
     def build_download_candidates(self, image_url: str):
         candidates = []
+        seed_urls = [self.strip_processing_suffix_from_url(image_url), image_url]
 
-        stripped_path_and_query = self.remove_resize_query_params(
-            self.strip_resize_suffix_from_url(image_url)
-        )
-        stripped_path_only = self.strip_resize_suffix_from_url(image_url)
-        stripped_query_only = self.remove_resize_query_params(image_url)
+        for seed_url in seed_urls:
+            stripped_path_and_query = self.remove_resize_query_params(
+                self.strip_resize_suffix_from_url(seed_url)
+            )
+            stripped_path_only = self.strip_resize_suffix_from_url(seed_url)
+            stripped_query_only = self.remove_resize_query_params(seed_url)
 
-        for candidate in (
-            stripped_path_and_query,
-            stripped_path_only,
-            stripped_query_only,
-            image_url,
-        ):
-            if candidate and candidate not in candidates:
-                candidates.append(candidate)
+            for candidate in (
+                stripped_path_and_query,
+                stripped_path_only,
+                stripped_query_only,
+                seed_url,
+            ):
+                if candidate and candidate not in candidates:
+                    candidates.append(candidate)
 
         return candidates
 
@@ -188,6 +197,21 @@ class ImageDownloader:
             parsed.path,
             flags=re.IGNORECASE,
         )
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                stripped_path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
+    def strip_processing_suffix_from_url(self, image_url: str) -> str:
+        parsed = urlparse(image_url)
+        pattern = rf"(\.(?:{self.IMAGE_EXTENSION_PATTERN}))(?:[~!@].+)$"
+        stripped_path = re.sub(pattern, r"\1", parsed.path, flags=re.IGNORECASE)
         return urlunparse(
             (
                 parsed.scheme,
@@ -292,4 +316,13 @@ class ImageDownloader:
 
     def looks_like_image(self, url: str) -> bool:
         path = urlparse(url).path.lower()
-        return any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
+        if any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
+            return True
+
+        stripped_path = re.sub(
+            rf"(\.(?:{self.IMAGE_EXTENSION_PATTERN}))(?:[~!@].+)$",
+            r"\1",
+            path,
+            flags=re.IGNORECASE,
+        )
+        return any(stripped_path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
