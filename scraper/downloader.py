@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 import re
-from urllib.parse import urlparse, unquote
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, unquote
 
 from scraper.converter import ImageConverter
 from utils.helpers import (
@@ -23,6 +23,25 @@ class DownloadSummary:
 
 
 class ImageDownloader:
+    RESIZE_QUERY_KEYS = frozenset(
+        {
+            "w",
+            "width",
+            "h",
+            "height",
+            "fit",
+            "crop",
+            "resize",
+            "size",
+            "quality",
+            "q",
+            "dpr",
+            "imgmax",
+            "maxwidth",
+            "maxheight",
+        }
+    )
+
     def __init__(
         self,
         session,
@@ -73,6 +92,7 @@ class ImageDownloader:
 
             if progress_callback:
                 progress_callback(progress)
+
         failed_count = total - success_count
         self.logger.info(f"下载阶段结束，成功 {success_count} 张，失败 {failed_count} 张")
 
@@ -112,15 +132,98 @@ class ImageDownloader:
         return self.converter
 
     def download_image(self, image_url: str) -> str:
-        response = self.session.get(
-            image_url,
-            timeout=20,
-            stream=True,
-            headers=self.request_headers,
-        )
-        response.raise_for_status()
+        last_error = None
 
-        content_type = (response.headers.get("Content-Type") or "").lower()
+        for candidate_url in self.build_download_candidates(image_url):
+            try:
+                response = self.session.get(
+                    candidate_url,
+                    timeout=20,
+                    stream=True,
+                    headers=self.request_headers,
+                )
+                response.raise_for_status()
+
+                content_type = (response.headers.get("Content-Type") or "").lower()
+                if not self.is_image_response(content_type, candidate_url):
+                    raise ValueError(f"响应不是图片内容：{content_type or 'unknown'}")
+
+                final_url = getattr(response, "url", None) or candidate_url
+                file_path = self.persist_response(final_url, response, content_type)
+
+                if candidate_url != image_url:
+                    self.logger.info("已从缩略图链接升级到更可能的原图：%s -> %s", image_url, candidate_url)
+
+                return file_path
+            except Exception as exc:
+                last_error = exc
+
+        raise last_error or ValueError("图片下载失败。")
+
+    def build_download_candidates(self, image_url: str):
+        candidates = []
+
+        stripped_path_and_query = self.remove_resize_query_params(
+            self.strip_resize_suffix_from_url(image_url)
+        )
+        stripped_path_only = self.strip_resize_suffix_from_url(image_url)
+        stripped_query_only = self.remove_resize_query_params(image_url)
+
+        for candidate in (
+            stripped_path_and_query,
+            stripped_path_only,
+            stripped_query_only,
+            image_url,
+        ):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        return candidates
+
+    def strip_resize_suffix_from_url(self, image_url: str) -> str:
+        parsed = urlparse(image_url)
+        stripped_path = re.sub(
+            r"([_-])\d{2,5}x\d{2,5}(?=\.[a-z0-9]+$)",
+            "",
+            parsed.path,
+            flags=re.IGNORECASE,
+        )
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                stripped_path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
+    def remove_resize_query_params(self, image_url: str) -> str:
+        parsed = urlparse(image_url)
+        filtered_pairs = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.lower() not in self.RESIZE_QUERY_KEYS
+        ]
+        filtered_query = urlencode(filtered_pairs, doseq=True)
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                filtered_query,
+                parsed.fragment,
+            )
+        )
+
+    def is_image_response(self, content_type: str, image_url: str) -> bool:
+        if content_type:
+            return content_type.split(";")[0].strip().startswith("image/")
+        return self.looks_like_image(image_url)
+
+    def persist_response(self, image_url: str, response, content_type: str) -> str:
         ext = self.decide_extension(image_url, content_type)
         category = self.classify_image(ext, content_type)
 
@@ -186,3 +289,7 @@ class ImageDownloader:
             if not os.path.exists(new_path):
                 return new_path
             counter += 1
+
+    def looks_like_image(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)

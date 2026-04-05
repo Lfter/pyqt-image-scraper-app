@@ -24,6 +24,11 @@ python main.py
 默认会保留原图；如果启用了“自动生成兼容格式副本”，程序会为可转码图片额外生成一份 `*_compatible.png` 或 `*_compatible.jpg`。
 其中 SVG 会直接渲染为 PNG，AVIF 会通过 `pillow-avif-plugin` 进行解码后再转为更通用的格式。
 
+程序现在会尽量优先抓取原图：
+- 提取阶段会优先保留 `data-full`、`data-original`、大图 `srcset` 等更像原图的链接。
+- 下载阶段会自动尝试把常见缩略图 URL 还原成原图 URL。
+- 动态模式会把浏览器中的登录 Cookie 同步到下载会话里，减少拿到占位图或低清图的情况。
+
 ## 动态模式
 动态抓取依赖 Playwright。首次安装依赖后，还需要执行：
 

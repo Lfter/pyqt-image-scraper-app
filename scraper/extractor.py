@@ -1,7 +1,8 @@
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
+
 from utils.helpers import (
     UNWANTED_IMAGE_KEYWORDS,
     UNWANTED_IMAGE_SIZE_HINTS,
@@ -11,6 +12,45 @@ from utils.helpers import (
 
 
 class ImageExtractor:
+    HIGH_PRIORITY_IMAGE_ATTRS = [
+        ("data-full", 320),
+        ("data-full-src", 320),
+        ("data-zoom-image", 320),
+        ("data-zoom-src", 320),
+        ("data-hires", 280),
+        ("data-large-file", 280),
+        ("data-orig-file", 280),
+        ("data-original", 260),
+        ("data-src-large", 240),
+        ("data-large", 220),
+        ("data-image", 200),
+        ("data-src", 180),
+        ("data-lazy-src", 160),
+        ("data-url", 140),
+        ("data-echo", 120),
+        ("data-lazy", 120),
+        ("data-flickity-lazyload", 200),
+        ("src", 100),
+    ]
+    RESIZE_QUERY_KEYS = frozenset(
+        {
+            "w",
+            "width",
+            "h",
+            "height",
+            "fit",
+            "crop",
+            "resize",
+            "size",
+            "quality",
+            "q",
+            "dpr",
+            "imgmax",
+            "maxwidth",
+            "maxheight",
+        }
+    )
+
     def __init__(self, session):
         self.session = session
         self.logger = setup_logger()
@@ -34,55 +74,60 @@ class ImageExtractor:
         return image_urls
 
     def extract_image_urls(self, soup: BeautifulSoup, base_url: str):
-        found = []
-        seen = set()
+        ranked_images = {}
+        ordered_keys = []
 
-        def add_url(candidate):
+        def add_url(candidate, score=0):
             full_url = self.normalize_image_url(candidate, base_url)
             if not full_url:
                 return
             if self.is_unwanted_image(full_url):
                 return
-            if full_url not in seen:
-                seen.add(full_url)
-                found.append(full_url)
 
-        lazy_attrs = [
-            "data-original",
-            "data-src",
-            "data-lazy-src",
-            "data-image",
-            "data-url",
-            "data-echo",
-            "data-lazy",
-            "data-flickity-lazyload",
-            "src",
-        ]
+            identity = self.build_image_identity(full_url)
+            final_score = score + self.score_image_candidate_url(full_url)
+            existing = ranked_images.get(identity)
+
+            if existing is None:
+                ordered_keys.append(identity)
+                ranked_images[identity] = {"url": full_url, "score": final_score}
+                return
+
+            if final_score > existing["score"]:
+                ranked_images[identity] = {"url": full_url, "score": final_score}
 
         for img in soup.find_all("img"):
-            for attr in lazy_attrs:
-                add_url(img.get(attr))
+            for attr, base_score in self.HIGH_PRIORITY_IMAGE_ATTRS:
+                add_url(img.get(attr), score=base_score)
 
-            srcset = img.get("srcset") or img.get("data-srcset")
-            if srcset:
-                for item in self.parse_srcset(srcset):
-                    add_url(item)
+            srcset_candidate = self.pick_best_srcset_candidate(
+                img.get("srcset") or img.get("data-srcset")
+            )
+            if srcset_candidate:
+                item, srcset_score = srcset_candidate
+                add_url(item, score=220 + srcset_score)
+
+            wrapped_link = img.find_parent("a", href=True)
+            if wrapped_link and self.looks_like_image(wrapped_link.get("href") or ""):
+                add_url(wrapped_link.get("href"), score=300)
 
         for source in soup.find_all("source"):
-            srcset = source.get("srcset") or source.get("data-srcset")
-            if srcset:
-                for item in self.parse_srcset(srcset):
-                    add_url(item)
+            srcset_candidate = self.pick_best_srcset_candidate(
+                source.get("srcset") or source.get("data-srcset")
+            )
+            if srcset_candidate:
+                item, srcset_score = srcset_candidate
+                add_url(item, score=220 + srcset_score)
 
         for a in soup.find_all("a", href=True):
             href = self.normalize_image_url(a.get("href"), base_url)
             if href and self.looks_like_image(href) and not self.is_unwanted_image(href):
-                add_url(href)
+                add_url(href, score=260)
 
         for tag in soup.find_all(style=True):
             style = tag.get("style") or ""
             for bg_url in self.extract_urls_from_style(style):
-                add_url(bg_url)
+                add_url(bg_url, score=120)
 
         meta_selectors = [
             {"property": "og:image"},
@@ -91,19 +136,28 @@ class ImageExtractor:
         ]
         for selector in meta_selectors:
             for meta in soup.find_all("meta", attrs=selector):
-                add_url(meta.get("content"))
+                add_url(meta.get("content"), score=160)
 
         for link in soup.find_all("link", href=True):
             rel = link.get("rel", [])
             rel_text = " ".join(rel).lower() if isinstance(rel, list) else str(rel).lower()
             href = link.get("href")
             if "icon" in rel_text or "image" in rel_text or self.looks_like_image(href or ""):
-                add_url(href)
+                add_url(href, score=80)
 
-        return found
+        return [ranked_images[key]["url"] for key in ordered_keys]
 
     def parse_srcset(self, srcset_value: str):
+        best_candidate = self.pick_best_srcset_candidate(srcset_value)
+        if not best_candidate:
+            return []
+        best_url, _ = best_candidate
+        return [best_url]
+
+    def parse_srcset_candidates(self, srcset_value: str):
         candidates = []
+        if not srcset_value:
+            return candidates
 
         for item in srcset_value.split(","):
             parts = item.strip().split()
@@ -122,18 +176,20 @@ class ImageExtractor:
                         score = 0
                 elif descriptor.endswith("x"):
                     try:
-                        score = float(descriptor[:-1]) * 1000
+                        score = int(float(descriptor[:-1]) * 1000)
                     except ValueError:
                         score = 0
 
-            candidates.append((score, url))
+            candidates.append((url, score))
 
+        return candidates
+
+    def pick_best_srcset_candidate(self, srcset_value: str):
+        candidates = self.parse_srcset_candidates(srcset_value)
         if not candidates:
-            return []
+            return None
+        return max(candidates, key=lambda item: item[1])
 
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        return [candidates[0][1]]
-    
     def normalize_image_url(self, raw_url: str, base_url: str):
         if not raw_url:
             return None
@@ -153,6 +209,54 @@ class ImageExtractor:
 
         return full_url
 
+    def build_image_identity(self, image_url: str) -> str:
+        parsed = urlparse(image_url)
+        normalized_path = self.strip_resize_suffix(parsed.path)
+        filtered_query = self.filter_resize_query(parsed.query)
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                normalized_path,
+                parsed.params,
+                filtered_query,
+                "",
+            )
+        )
+
+    def strip_resize_suffix(self, path: str) -> str:
+        return re.sub(r"([_-])\d{2,5}x\d{2,5}(?=\.[a-z0-9]+$)", "", path, flags=re.IGNORECASE)
+
+    def filter_resize_query(self, query: str) -> str:
+        if not query:
+            return ""
+
+        filtered_pairs = [
+            (key, value)
+            for key, value in parse_qsl(query, keep_blank_values=True)
+            if key.lower() not in self.RESIZE_QUERY_KEYS
+        ]
+        return urlencode(filtered_pairs, doseq=True)
+
+    def score_image_candidate_url(self, image_url: str) -> int:
+        parsed = urlparse(image_url)
+        path_bonus = self.extract_size_score_from_path(parsed.path)
+        query_bonus = self.extract_size_score_from_query(parsed.query)
+        return min(max(path_bonus, query_bonus) // 10, 180)
+
+    def extract_size_score_from_path(self, path: str) -> int:
+        match = re.search(r"(\d{2,5})x(\d{2,5})(?=\.[a-z0-9]+$)", path, flags=re.IGNORECASE)
+        if not match:
+            return 0
+        return max(int(match.group(1)), int(match.group(2)))
+
+    def extract_size_score_from_query(self, query: str) -> int:
+        size_values = []
+        for key, value in parse_qsl(query, keep_blank_values=True):
+            if key.lower() in {"w", "width", "h", "height"} and value.isdigit():
+                size_values.append(int(value))
+        return max(size_values, default=0)
+
     def looks_like_image(self, url: str) -> bool:
         path = urlparse(url).path.lower()
         return any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
@@ -167,7 +271,7 @@ class ImageExtractor:
                 results.append(cleaned)
 
         return results
-    
+
     def is_unwanted_image(self, url: str) -> bool:
         lowered = url.lower()
         blocked_markers = UNWANTED_IMAGE_KEYWORDS + UNWANTED_IMAGE_SIZE_HINTS

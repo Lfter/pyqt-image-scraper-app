@@ -204,13 +204,19 @@ class MainWindow(QMainWindow):
             self.status_label.setText("正在从当前页面提取图片链接...")
 
             image_urls = self.dynamic_extractor.extract_from_current_page(self.pending_page_url)
-            self.launch_worker(self.pending_page_url, self.pending_save_dir, image_urls=image_urls)
+            session = self.dynamic_extractor.build_authenticated_session()
+            self.launch_worker(
+                self.pending_page_url,
+                self.pending_save_dir,
+                image_urls=image_urls,
+                session=session,
+            )
         except Exception as exc:
             self.set_controls_enabled(True)
             self.reset_dynamic_state()
             QMessageBox.critical(self, "错误", str(exc))
 
-    def launch_worker(self, page_url: str, save_dir: str, image_urls=None):
+    def launch_worker(self, page_url: str, save_dir: str, image_urls=None, session=None):
         self.progress_bar.setValue(0)
         self.set_controls_enabled(False)
 
@@ -220,6 +226,7 @@ class MainWindow(QMainWindow):
             mode=self.current_mode,
             image_urls=image_urls,
             auto_convert=self.compatible_copy_checkbox.isChecked(),
+            session=session,
         )
         self.worker.progress_changed.connect(self.on_progress_changed)
         self.worker.status_changed.connect(self.on_status_changed)

@@ -1,7 +1,9 @@
-from playwright.sync_api import sync_playwright
+import requests
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 from scraper.extractor import ImageExtractor
+from utils.helpers import USER_AGENT
 
 
 class DynamicImageExtractor(ImageExtractor):
@@ -26,6 +28,24 @@ class DynamicImageExtractor(ImageExtractor):
         html = self.page.content()
         soup = BeautifulSoup(html, "html.parser")
         return self.extract_image_urls(soup, base_url)
+
+    def build_authenticated_session(self):
+        if self.context is None:
+            raise ValueError("动态页面尚未打开，无法同步登录状态。")
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": USER_AGENT})
+
+        for cookie in self.context.cookies():
+            session.cookies.set(
+                cookie["name"],
+                cookie["value"],
+                domain=cookie.get("domain"),
+                path=cookie.get("path", "/"),
+                secure=cookie.get("secure", False),
+            )
+
+        return session
 
     def close(self):
         if self.page:

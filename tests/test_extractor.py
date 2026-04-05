@@ -62,6 +62,31 @@ class ImageExtractorTests(unittest.TestCase):
                     self.extractor.normalize_image_url(raw_url, "https://example.com/gallery")
                 )
 
+    def test_extract_image_urls_prefers_original_over_thumbnail_variants(self):
+        soup = BeautifulSoup(
+            """
+            <html>
+                <body>
+                    <a href="/uploads/photo.jpg">
+                        <img src="/uploads/photo-300x200.jpg" data-original="/uploads/photo.jpg" />
+                    </a>
+                    <img src="/gallery/hero.jpg?width=320&height=180" data-full="/gallery/hero.jpg" />
+                </body>
+            </html>
+            """,
+            "html.parser",
+        )
+
+        image_urls = self.extractor.extract_image_urls(soup, "https://example.com/post")
+
+        self.assertEqual(
+            image_urls,
+            [
+                "https://example.com/uploads/photo.jpg",
+                "https://example.com/gallery/hero.jpg",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

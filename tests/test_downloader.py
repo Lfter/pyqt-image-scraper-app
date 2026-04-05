@@ -15,10 +15,11 @@ from utils import helpers
 
 
 class FakeResponse:
-    def __init__(self, headers=None, chunks=None, error=None):
+    def __init__(self, headers=None, chunks=None, error=None, url=None):
         self.headers = headers or {}
         self._chunks = chunks or []
         self._error = error
+        self.url = url
 
     def raise_for_status(self):
         if self._error:
@@ -171,6 +172,27 @@ class ImageDownloaderTests(unittest.TestCase):
             self.assertEqual(status_updates, ["正在下载：1/1", "正在转码：1/1"])
             self.assertTrue(converter.converted_paths)
             self.assertTrue(Path(converter.converted_paths[0][1]).exists())
+
+    def test_download_image_prefers_upgraded_original_candidate(self):
+        thumbnail_url = "https://img.example.com/uploads/photo-300x200.jpg?width=300&height=200"
+        original_url = "https://img.example.com/uploads/photo.jpg"
+        session = FakeSession(
+            {
+                original_url: FakeResponse(
+                    headers={"Content-Type": "image/jpeg"},
+                    chunks=[b"original"],
+                    url=original_url,
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloader = ImageDownloader(session, "https://example.com/page", temp_dir)
+            saved_path = downloader.download_image(thumbnail_url)
+
+            self.assertEqual(session.calls[0]["url"], original_url)
+            self.assertEqual(Path(saved_path).name, "photo.jpg")
+            self.assertTrue(Path(saved_path).exists())
 
 
 if __name__ == "__main__":
