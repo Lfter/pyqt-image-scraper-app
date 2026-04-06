@@ -1,3 +1,12 @@
 #!/usr/bin/env bash
-export QT_QPA_PLATFORM_PLUGIN_PATH="/home/ling/桌面/Python/Pyqt Image Scraper App/.venv/lib/python3.12/site-packages/PyQt5/Qt5/plugins/platforms"
-exec "/home/ling/桌面/Python/Pyqt Image Scraper App/.venv/bin/python" "/home/ling/桌面/Python/Pyqt Image Scraper App/main.py"
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python"
+
+if [ ! -x "$PYTHON_BIN" ]; then
+    echo "未找到 $PYTHON_BIN，请先在项目根目录创建 .venv 并安装依赖。"
+    exit 1
+fi
+
+exec "$PYTHON_BIN" "$SCRIPT_DIR/scripts/launch_app.py" "$@"

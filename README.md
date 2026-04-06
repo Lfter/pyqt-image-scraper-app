@@ -16,8 +16,28 @@
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+playwright install
 python main.py
 ```
+
+## Windows 源码运行
+Windows 版本建议使用项目自带启动器，它会基于当前虚拟环境自动探测 Qt 插件目录，不依赖写死的 Linux 路径。
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+playwright install
+.\run_app.bat
+```
+
+如果你在 WSL 或 Git Bash 里工作，也可以继续使用：
+
+```bash
+./run_app.sh
+```
+
+VS Code 调试入口现在统一走 `scripts/launch_app.py`，工作区解释器路径也改成了相对 `.venv`。
 
 默认会保留原图；如果启用了“自动生成兼容格式副本”，程序会为可转码图片额外生成一份 `*_compatible.png` 或 `*_compatible.jpg`。
 其中 SVG 会直接渲染为 PNG，AVIF 会通过 `pillow-avif-plugin` 进行解码后再转为更通用的格式。
