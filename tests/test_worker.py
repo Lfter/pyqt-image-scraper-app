@@ -62,6 +62,26 @@ class FakeDownloader:
         return len(image_urls)
 
 
+class FakeBrowserExtractor:
+    def __init__(self):
+        self.opened = []
+        self.closed = False
+        self.primary_network_image_urls = []
+
+    def open_page(self, page_url: str, headless: bool = False):
+        self.opened.append((page_url, headless))
+
+    def extract_from_current_page(self, page_url: str):
+        del page_url
+        return ["https://cdn.example.com/a.jpg"]
+
+    def build_authenticated_session(self):
+        return DummySession()
+
+    def close(self):
+        self.closed = True
+
+
 class ImageScraperThreadTests(unittest.TestCase):
     def setUp(self):
         FakeExtractor.last_requested_url = None
@@ -166,6 +186,84 @@ class ImageScraperThreadTests(unittest.TestCase):
                 ["抓取完成，共下载 1 张图片。 已生成 1 个兼容格式副本。"],
             )
             self.assertTrue(ConvertingDownloader.instances[-1].auto_convert)
+
+    def test_run_tries_browser_assisted_extraction_for_transformed_urls(self):
+        class TransformingExtractor:
+            def __init__(self, session):
+                self.session = session
+
+            def extract_from_page(self, page_url: str):
+                del page_url
+                return ["https://cdn.example.com/a.jpg~tplv-thumb.avif"]
+
+        browser_instances = []
+
+        def create_browser_extractor():
+            extractor = FakeBrowserExtractor()
+            browser_instances.append(extractor)
+            return extractor
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            thread = ImageScraperThread(
+                "https://example.com/gallery",
+                temp_dir,
+                session=DummySession(),
+                extractor_factory=TransformingExtractor,
+                downloader_cls=FakeDownloader,
+                browser_extractor_factory=create_browser_extractor,
+                now_provider=lambda: datetime(2024, 1, 2, 3, 4, 5),
+            )
+
+            status_updates = []
+            thread.status_changed.connect(status_updates.append)
+            thread.run()
+
+            self.assertIn("正在尝试浏览器辅助提取原图链接...", status_updates)
+            self.assertEqual(browser_instances[0].opened, [("https://example.com/gallery", True)])
+            self.assertTrue(browser_instances[0].closed)
+            self.assertEqual(
+                FakeDownloader.instances[-1].calls,
+                [["https://cdn.example.com/a.jpg"]],
+            )
+
+    def test_run_prefers_browser_primary_results_without_merging_fallbacks(self):
+        class TransformingExtractor:
+            def __init__(self, session):
+                self.session = session
+
+            def extract_from_page(self, page_url: str):
+                del page_url
+                return [
+                    "https://cdn.example.com/a.jpg~tplv-thumb.avif",
+                    "https://example.com/pic/a.jpg",
+                ]
+
+        browser_instances = []
+
+        def create_browser_extractor():
+            extractor = FakeBrowserExtractor()
+            extractor.primary_network_image_urls = ["https://cdn.example.com/a.jpg"]
+            browser_instances.append(extractor)
+            return extractor
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            thread = ImageScraperThread(
+                "https://example.com/gallery",
+                temp_dir,
+                session=DummySession(),
+                extractor_factory=TransformingExtractor,
+                downloader_cls=FakeDownloader,
+                browser_extractor_factory=create_browser_extractor,
+                now_provider=lambda: datetime(2024, 1, 2, 3, 4, 5),
+            )
+
+            thread.run()
+
+            self.assertTrue(browser_instances[0].closed)
+            self.assertEqual(
+                FakeDownloader.instances[-1].calls,
+                [["https://cdn.example.com/a.jpg"]],
+            )
 
 
 if __name__ == "__main__":

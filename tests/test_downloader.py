@@ -218,6 +218,29 @@ class ImageDownloaderTests(unittest.TestCase):
             self.assertEqual(Path(saved_path).name, "photo.JPG")
             self.assertTrue(Path(saved_path).exists())
 
+    def test_download_image_prefers_explicit_original_delivery_url(self):
+        origin_url = (
+            "https://img.example.com/uploads/photo.JPG"
+            "~tplv-9lv23dm2t1-image.JPG?sign=abc"
+        )
+        session = FakeSession(
+            {
+                origin_url: FakeResponse(
+                    headers={"Content-Type": "image/jpeg"},
+                    chunks=[b"original"],
+                    url=origin_url,
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            downloader = ImageDownloader(session, "https://example.com/page", temp_dir)
+            saved_path = downloader.download_image(origin_url)
+
+            self.assertEqual(session.calls[0]["url"], origin_url)
+            self.assertEqual(Path(saved_path).name, "photo.JPG")
+            self.assertTrue(Path(saved_path).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

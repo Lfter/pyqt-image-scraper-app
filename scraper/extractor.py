@@ -52,6 +52,49 @@ class ImageExtractor:
         "file",
         "href",
     )
+    PAYLOAD_IMAGE_FIELD_KEYWORDS = (
+        "origin",
+        "original",
+        "master",
+        "download",
+        "raw",
+        "full",
+        "zoom",
+        "hires",
+        "large",
+        "big",
+        "small",
+        "middle",
+        "preview",
+        "thumb",
+        "thumbnail",
+        "image",
+        "img",
+        "pic",
+        "photo",
+        "cover",
+        "poster",
+        "logo",
+        "background",
+        "banner",
+        "grid_pic",
+    )
+    PAYLOAD_IGNORED_FIELD_KEYWORDS = (
+        "head",
+        "avatar",
+        "face_album",
+        "face_albums",
+        "activity_url",
+        "share",
+        "wximg",
+        "wx_img",
+        "qr",
+        "qrcode",
+        "qr_code",
+        "code_url",
+        "link",
+        "href",
+    )
     IGNORED_GENERIC_ATTRS = {
         "alt",
         "class",
@@ -86,6 +129,28 @@ class ImageExtractor:
             "imgmax",
             "maxwidth",
             "maxheight",
+        }
+    )
+    IDENTITY_IGNORED_QUERY_KEYS = RESIZE_QUERY_KEYS.union(
+        {
+            "sign",
+            "signature",
+            "token",
+            "expires",
+            "exp",
+            "auth",
+            "auth_key",
+            "authkey",
+            "x-amz-signature",
+            "x-amz-credential",
+            "x-amz-date",
+            "x-amz-expires",
+            "x-amz-security-token",
+            "x-goog-signature",
+            "x-goog-credential",
+            "x-goog-date",
+            "x-goog-expires",
+            "x-goog-security-token",
         }
     )
 
@@ -258,7 +323,7 @@ class ImageExtractor:
         normalized_path = self.strip_resize_suffix(
             self.strip_post_extension_transform_suffix(parsed.path)
         )
-        filtered_query = self.filter_resize_query(parsed.query)
+        filtered_query = self.filter_identity_query(parsed.query)
         return urlunparse(
             (
                 parsed.scheme,
@@ -285,6 +350,17 @@ class ImageExtractor:
             (key, value)
             for key, value in parse_qsl(query, keep_blank_values=True)
             if key.lower() not in self.RESIZE_QUERY_KEYS
+        ]
+        return urlencode(filtered_pairs, doseq=True)
+
+    def filter_identity_query(self, query: str) -> str:
+        if not query:
+            return ""
+
+        filtered_pairs = [
+            (key, value)
+            for key, value in parse_qsl(query, keep_blank_values=True)
+            if key.lower() not in self.IDENTITY_IGNORED_QUERY_KEYS
         ]
         return urlencode(filtered_pairs, doseq=True)
 
@@ -369,6 +445,89 @@ class ImageExtractor:
         if re.search(rf"\.(?:{self.IMAGE_EXTENSION_PATTERN})(?:$|[?#~!@])", lowered):
             return True
         return False
+
+    def looks_like_payload_image_value(self, value: str) -> bool:
+        raw_value = value.strip()
+        if not raw_value:
+            return False
+        if "/" not in raw_value and not raw_value.startswith(("http://", "https://", "//", "./", "../")):
+            return False
+        normalized = self.normalize_image_url(value, "https://example.invalid")
+        if not normalized:
+            return False
+        return self.looks_like_image(normalized)
+
+    def extract_image_urls_from_payload(self, payload, base_url: str):
+        ranked_images = {}
+        ordered_keys = []
+
+        def add_url(candidate, score=0):
+            full_url = self.normalize_image_url(candidate, base_url)
+            if not full_url:
+                return
+            if self.is_unwanted_image(full_url):
+                return
+
+            identity = self.build_image_identity(full_url)
+            final_score = score + self.score_image_candidate_url(full_url)
+            existing = ranked_images.get(identity)
+
+            if existing is None:
+                ordered_keys.append(identity)
+                ranked_images[identity] = {"url": full_url, "score": final_score}
+                return
+
+            if final_score > existing["score"]:
+                ranked_images[identity] = {"url": full_url, "score": final_score}
+
+        def walk(node, path_segments):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    key_text = str(key)
+                    walk(value, path_segments + (key_text,))
+                return
+
+            if isinstance(node, list):
+                for item in node:
+                    walk(item, path_segments)
+                return
+
+            if (
+                isinstance(node, str)
+                and self.looks_like_payload_image_value(node)
+                and self.looks_like_payload_image_field(path_segments)
+            ):
+                add_url(node, score=self.score_payload_path(path_segments))
+
+        walk(payload, tuple())
+        return [ranked_images[key]["url"] for key in ordered_keys]
+
+    def score_payload_path(self, path_segments) -> int:
+        if not path_segments:
+            return 120
+
+        path_text = " ".join(segment.lower() for segment in path_segments)
+
+        if any(keyword in path_text for keyword in ("origin", "original", "master", "download", "raw")):
+            return 520
+        if any(keyword in path_text for keyword in ("full", "zoom", "hires")):
+            return 420
+        if any(keyword in path_text for keyword in ("large", "big", "source")):
+            return 320
+        if any(keyword in path_text for keyword in ("small", "thumb", "thumbnail", "preview", "cover")):
+            return 80
+        if any(keyword in path_text for keyword in ("image", "img", "pic", "photo", "src")):
+            return 220
+        return 140
+
+    def looks_like_payload_image_field(self, path_segments) -> bool:
+        if not path_segments:
+            return False
+
+        path_text = " ".join(segment.lower() for segment in path_segments)
+        if any(keyword in path_text for keyword in self.PAYLOAD_IGNORED_FIELD_KEYWORDS):
+            return False
+        return any(keyword in path_text for keyword in self.PAYLOAD_IMAGE_FIELD_KEYWORDS)
 
     def score_generic_image_attr_name(self, attr_name: str) -> int:
         if any(keyword in attr_name for keyword in ("origin", "original", "master", "download", "raw")):

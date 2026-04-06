@@ -129,6 +129,35 @@ class ImageExtractorTests(unittest.TestCase):
 
         self.assertEqual(image_urls, ["https://example.com/images/photo.jpg"])
 
+    def test_extract_image_urls_from_payload_prefers_origin_fields(self):
+        payload = {
+            "result": {
+                "pics_array": [
+                    {
+                        "small_img": "https://cdn.example.com/uploads/photo.JPG~tplv-thumb.avif?sign=small",
+                        "origin_img": "https://cdn.example.com/uploads/photo.JPG~tplv-image.JPG?sign=origin",
+                        "pic_name": "photo.JPG",
+                        "face_albums": [
+                            {
+                                "head_img": "https://cdn.example.com/avatars/head.jpg~tplv-image.image?sign=head",
+                                "wxImg": "https://example.com/pic/photo.JPG",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+
+        image_urls = self.extractor.extract_image_urls_from_payload(
+            payload,
+            "https://example.com/api/pic/list",
+        )
+
+        self.assertEqual(
+            image_urls,
+            ["https://cdn.example.com/uploads/photo.JPG~tplv-image.JPG?sign=origin"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
