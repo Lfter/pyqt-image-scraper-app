@@ -19,8 +19,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-兼容入口 `Pyqt Image Scraper App.py` 仍然保留，但内部已经转发到 `main.py`，后续只需要维护一套实现。
-
 默认会保留原图；如果启用了“自动生成兼容格式副本”，程序会为可转码图片额外生成一份 `*_compatible.png` 或 `*_compatible.jpg`。
 其中 SVG 会直接渲染为 PNG，AVIF 会通过 `pillow-avif-plugin` 进行解码后再转为更通用的格式。
 
