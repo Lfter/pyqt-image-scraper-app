@@ -158,6 +158,26 @@ class ImageExtractorTests(unittest.TestCase):
             ["https://cdn.example.com/uploads/photo.JPG~tplv-image.JPG?sign=origin"],
         )
 
+    def test_extract_image_candidates_track_source_and_context(self):
+        soup = BeautifulSoup(
+            """
+            <html>
+                <body>
+                    <img data-full="/gallery/photo.jpg" src="/gallery/photo-320x180.jpg" />
+                </body>
+            </html>
+            """,
+            "html.parser",
+        )
+
+        candidates = self.extractor.extract_image_candidates(soup, "https://example.com/post")
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].url, "https://example.com/gallery/photo.jpg")
+        self.assertEqual(candidates[0].source, "dom")
+        self.assertEqual(candidates[0].context, "data-full")
+        self.assertIn("/gallery/photo.jpg", candidates[0].identity)
+
 
 if __name__ == "__main__":
     unittest.main()

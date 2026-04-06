@@ -11,14 +11,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scraper.worker import ImageScraperThread
+from tests.support.fakes import DummySession
 
 
 APP = QCoreApplication.instance() or QCoreApplication([])
-
-
-class DummySession:
-    def __init__(self):
-        self.headers = {}
 
 
 class FakeExtractor:
@@ -62,30 +58,22 @@ class FakeDownloader:
         return len(image_urls)
 
 
-class FakeBrowserExtractor:
-    def __init__(self):
-        self.opened = []
-        self.closed = False
-        self.primary_network_image_urls = []
+class RecordingPipeline:
+    last_init_kwargs = None
 
-    def open_page(self, page_url: str, headless: bool = False):
-        self.opened.append((page_url, headless))
+    def __init__(self, **kwargs):
+        self.__class__.last_init_kwargs = kwargs
 
-    def extract_from_current_page(self, page_url: str):
-        del page_url
+    def resolve(self, page_url: str, mode: str = "static", image_urls=None):
+        del page_url, mode, image_urls
         return ["https://cdn.example.com/a.jpg"]
-
-    def build_authenticated_session(self):
-        return DummySession()
-
-    def close(self):
-        self.closed = True
 
 
 class ImageScraperThreadTests(unittest.TestCase):
     def setUp(self):
         FakeExtractor.last_requested_url = None
         FakeDownloader.instances.clear()
+        RecordingPipeline.last_init_kwargs = None
 
     def test_run_uses_extractor_and_creates_timestamped_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -187,83 +175,24 @@ class ImageScraperThreadTests(unittest.TestCase):
             )
             self.assertTrue(ConvertingDownloader.instances[-1].auto_convert)
 
-    def test_run_tries_browser_assisted_extraction_for_transformed_urls(self):
-        class TransformingExtractor:
-            def __init__(self, session):
-                self.session = session
-
-            def extract_from_page(self, page_url: str):
-                del page_url
-                return ["https://cdn.example.com/a.jpg~tplv-thumb.avif"]
-
-        browser_instances = []
-
-        def create_browser_extractor():
-            extractor = FakeBrowserExtractor()
-            browser_instances.append(extractor)
-            return extractor
+    def test_create_pipeline_passes_adapter_registry(self):
+        adapter_registry = object()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             thread = ImageScraperThread(
                 "https://example.com/gallery",
                 temp_dir,
                 session=DummySession(),
-                extractor_factory=TransformingExtractor,
                 downloader_cls=FakeDownloader,
-                browser_extractor_factory=create_browser_extractor,
+                pipeline_cls=RecordingPipeline,
+                adapter_registry=adapter_registry,
                 now_provider=lambda: datetime(2024, 1, 2, 3, 4, 5),
             )
 
-            status_updates = []
-            thread.status_changed.connect(status_updates.append)
-            thread.run()
+            image_urls = thread.resolve_image_urls()
 
-            self.assertIn("正在尝试浏览器辅助提取原图链接...", status_updates)
-            self.assertEqual(browser_instances[0].opened, [("https://example.com/gallery", True)])
-            self.assertTrue(browser_instances[0].closed)
-            self.assertEqual(
-                FakeDownloader.instances[-1].calls,
-                [["https://cdn.example.com/a.jpg"]],
-            )
-
-    def test_run_prefers_browser_primary_results_without_merging_fallbacks(self):
-        class TransformingExtractor:
-            def __init__(self, session):
-                self.session = session
-
-            def extract_from_page(self, page_url: str):
-                del page_url
-                return [
-                    "https://cdn.example.com/a.jpg~tplv-thumb.avif",
-                    "https://example.com/pic/a.jpg",
-                ]
-
-        browser_instances = []
-
-        def create_browser_extractor():
-            extractor = FakeBrowserExtractor()
-            extractor.primary_network_image_urls = ["https://cdn.example.com/a.jpg"]
-            browser_instances.append(extractor)
-            return extractor
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            thread = ImageScraperThread(
-                "https://example.com/gallery",
-                temp_dir,
-                session=DummySession(),
-                extractor_factory=TransformingExtractor,
-                downloader_cls=FakeDownloader,
-                browser_extractor_factory=create_browser_extractor,
-                now_provider=lambda: datetime(2024, 1, 2, 3, 4, 5),
-            )
-
-            thread.run()
-
-            self.assertTrue(browser_instances[0].closed)
-            self.assertEqual(
-                FakeDownloader.instances[-1].calls,
-                [["https://cdn.example.com/a.jpg"]],
-            )
+            self.assertEqual(image_urls, ["https://cdn.example.com/a.jpg"])
+            self.assertIs(RecordingPipeline.last_init_kwargs["adapter_registry"], adapter_registry)
 
 
 if __name__ == "__main__":

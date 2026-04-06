@@ -1,10 +1,11 @@
-from dataclasses import dataclass
 import hashlib
 import os
 import re
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, unquote
+from urllib.parse import urlparse, unquote
 
 from scraper.converter import ImageConverter
+from scraper.models import DownloadSummary
+from scraper.original_resolver import OriginalImageResolver
 from utils.helpers import (
     CONTENT_TYPE_TO_EXTENSION,
     IMAGE_CATEGORY_MAP,
@@ -16,39 +17,7 @@ from utils.helpers import (
 )
 
 
-@dataclass
-class DownloadSummary:
-    success_count: int
-    converted_count: int = 0
-
-
 class ImageDownloader:
-    IMAGE_EXTENSION_PATTERN = "|".join(
-        sorted(
-            {re.escape(ext.lstrip(".")) for ext in VALID_IMAGE_EXTENSIONS},
-            key=len,
-            reverse=True,
-        )
-    )
-    RESIZE_QUERY_KEYS = frozenset(
-        {
-            "w",
-            "width",
-            "h",
-            "height",
-            "fit",
-            "crop",
-            "resize",
-            "size",
-            "quality",
-            "q",
-            "dpr",
-            "imgmax",
-            "maxwidth",
-            "maxheight",
-        }
-    )
-
     def __init__(
         self,
         session,
@@ -57,6 +26,7 @@ class ImageDownloader:
         auto_convert: bool = False,
         keep_original: bool = True,
         converter=None,
+        resolver=None,
     ):
         self.session = session
         self.logger = setup_logger()
@@ -66,6 +36,7 @@ class ImageDownloader:
         self.auto_convert = auto_convert
         self.keep_original = keep_original
         self.converter = converter
+        self.resolver = resolver or OriginalImageResolver()
 
     def download_images(self, image_urls, progress_callback=None, status_callback=None):
         total = len(image_urls)
@@ -169,19 +140,19 @@ class ImageDownloader:
 
     def build_download_candidates(self, image_url: str):
         candidates = []
-        prioritize_original_url = self.should_prefer_original_url(image_url)
-        stripped_seed_url = self.strip_processing_suffix_from_url(image_url)
+        prioritize_original_url = self.resolver.should_prefer_original_url(image_url)
+        stripped_seed_url = self.resolver.strip_processing_suffix_from_url(image_url)
         if prioritize_original_url:
             seed_urls = [image_url, stripped_seed_url]
         else:
             seed_urls = [stripped_seed_url, image_url]
 
         for seed_url in seed_urls:
-            stripped_path_and_query = self.remove_resize_query_params(
-                self.strip_resize_suffix_from_url(seed_url)
+            stripped_path_and_query = self.resolver.remove_resize_query_params(
+                self.resolver.strip_resize_suffix_from_url(seed_url)
             )
-            stripped_path_only = self.strip_resize_suffix_from_url(seed_url)
-            stripped_query_only = self.remove_resize_query_params(seed_url)
+            stripped_path_only = self.resolver.strip_resize_suffix_from_url(seed_url)
+            stripped_query_only = self.resolver.remove_resize_query_params(seed_url)
 
             if prioritize_original_url:
                 ordered_candidates = (
@@ -203,69 +174,6 @@ class ImageDownloader:
                     candidates.append(candidate)
 
         return candidates
-
-    def should_prefer_original_url(self, image_url: str) -> bool:
-        path = urlparse(image_url).path.lower()
-        if "~" not in path:
-            return False
-
-        if any(marker in path for marker in ("resize", "thumb", "thumbnail", "preview", "crop", "small_", "middle_")):
-            return False
-
-        return any(marker in path for marker in ("-image.", "origin", "original", "master", "raw"))
-
-    def strip_resize_suffix_from_url(self, image_url: str) -> str:
-        parsed = urlparse(image_url)
-        stripped_path = re.sub(
-            r"([_-])\d{2,5}x\d{2,5}(?=\.[a-z0-9]+$)",
-            "",
-            parsed.path,
-            flags=re.IGNORECASE,
-        )
-        return urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                stripped_path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment,
-            )
-        )
-
-    def strip_processing_suffix_from_url(self, image_url: str) -> str:
-        parsed = urlparse(image_url)
-        pattern = rf"(\.(?:{self.IMAGE_EXTENSION_PATTERN}))(?:[~!@].+)$"
-        stripped_path = re.sub(pattern, r"\1", parsed.path, flags=re.IGNORECASE)
-        return urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                stripped_path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment,
-            )
-        )
-
-    def remove_resize_query_params(self, image_url: str) -> str:
-        parsed = urlparse(image_url)
-        filtered_pairs = [
-            (key, value)
-            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if key.lower() not in self.RESIZE_QUERY_KEYS
-        ]
-        filtered_query = urlencode(filtered_pairs, doseq=True)
-        return urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                parsed.path,
-                parsed.params,
-                filtered_query,
-                parsed.fragment,
-            )
-        )
 
     def is_image_response(self, content_type: str, image_url: str) -> bool:
         if content_type:
@@ -311,7 +219,7 @@ class ImageDownloader:
         return "UNKNOWN"
 
     def build_filename(self, image_url: str, ext: str) -> str:
-        path = urlparse(self.strip_processing_suffix_from_url(image_url)).path
+        path = urlparse(self.resolver.strip_processing_suffix_from_url(image_url)).path
         name = os.path.basename(path)
         name = unquote(name)
         name = re.sub(r"[^\w\-.]+", "_", name)
@@ -340,14 +248,4 @@ class ImageDownloader:
             counter += 1
 
     def looks_like_image(self, url: str) -> bool:
-        path = urlparse(url).path.lower()
-        if any(path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
-            return True
-
-        stripped_path = re.sub(
-            rf"(\.(?:{self.IMAGE_EXTENSION_PATTERN}))(?:[~!@].+)$",
-            r"\1",
-            path,
-            flags=re.IGNORECASE,
-        )
-        return any(stripped_path.endswith(ext) for ext in VALID_IMAGE_EXTENSIONS)
+        return self.resolver.looks_like_image(url)
